@@ -72,6 +72,9 @@ export function loadConfig(env = process.env) {
 
   const serviceToken = str('MIGRATOR_SERVICE_TOKEN');
   if (serviceToken && serviceToken.length < 32) problems.push('MIGRATOR_SERVICE_TOKEN must be at least 32 characters when set');
+  // The service API listens on 127.0.0.1 only, on its own port that nginx never proxies.
+  const servicePort = num('SERVICE_PORT', 3021, { min: 1, max: 65535, int: true });
+  if (serviceToken && servicePort === port) problems.push('SERVICE_PORT must differ from PORT');
 
   // --- mongo ---
   const mongo = {
@@ -127,9 +130,12 @@ export function loadConfig(env = process.env) {
     sessionSecret,
     allowedUsers: Object.freeze(allowedUsers),
     serviceToken: serviceToken || null,
+    servicePort,
     mongo: Object.freeze(mongo),
     s3: Object.freeze(s3),
     hotnodeGateway,
+    // The permanent IPFS nodes (no hotnode): "is this CID live?" is asked of these.
+    ipfsGateways: Object.freeze(ipfsGateways),
     // Download order: the hotnode first (videos still hot), then the supernode chain.
     sourceGateways: Object.freeze([...(hotnodeGateway ? [hotnodeGateway] : []), ...ipfsGateways]),
     playerBaseUrl,

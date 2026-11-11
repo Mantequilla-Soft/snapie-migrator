@@ -2,7 +2,7 @@
 module.exports = {
   apps: [{
     name: 'snapie-migrator',
-    script: 'src/server.js',
+    script: 'src/index.js',
     instances: 1,            // one process: the job queue and SQLite state are not shared
     exec_mode: 'fork',
     max_memory_restart: '1G',

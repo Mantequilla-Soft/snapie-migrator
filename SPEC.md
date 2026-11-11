@@ -216,15 +216,19 @@ than a `HEAD`.
 (§1) with a conditional `$unset`. It is only allowed after a **liveness check**
 passes:
 
-- The CAR is streamed from `ipfs.3speak.tv` (falling back to ipfs-audio)
-  without saving it.
-- The same block-hash and DAG-walk checks as step 4 must pass, so we know the
-  whole video is still on IPFS and not just the root.
+- The CAR is downloaded from the permanent IPFS nodes only (`IPFS_GATEWAYS`,
+  never the hotnode, which unpins) into `WORK_DIR`, under the disk budget, and
+  deleted afterwards.
+- The same checks as step 4 must pass (root, every block hash, full walk,
+  manifest present), so we know the whole video is still on IPFS and not just
+  the root.
 
-The check runs as its own button (**Check IPFS**) and is run again
-automatically by **Revert**. S3 objects are never deleted.
-
----
+**Check IPFS** (its own button) and **Revert** run as queue items, like
+migrations, because downloading a big video can outlast an HTTP request. They
+share the concurrency limit and the bandwidth, show progress, are kept in the
+history and survive a restart. Revert runs the check again every time, refuses a
+video the migrator didn't migrate, and writes nothing if the document changed
+meanwhile. S3 objects are never deleted.
 
 ## 7. Jobs, concurrency and restarts
 
@@ -256,7 +260,7 @@ automatically by **Revert**. S3 objects are never deleted.
 | `GET /api/me` | — | `{ user, authorized }` (drives which buttons are enabled) |
 | `GET /api/channel/:user` | — | the channel's videos from both collections, with eligibility and storage state |
 | `POST /api/dry-run` | allowlisted | `{ items: [{collection, id}] }` → the plan from §5 |
-| `POST /api/jobs` | allowlisted **or** service | `{ items, mode: 'archived' \| 'hot' }` → job id |
+| `POST /api/jobs` | allowlisted (service: own listener) | `{ items, mode: 'archived' \| 'hot' }` → job id |
 | `GET /api/jobs`, `GET /api/jobs/:id` | — | status and history |
 | `POST /api/jobs/:id/cancel`, `POST /api/items/:id/cancel` | allowlisted | |
 | `POST /api/items/check-ipfs` | allowlisted | `{ collection, id }` → the liveness result from §6 |
@@ -272,10 +276,21 @@ Disabling a button in the UI is only cosmetic.
 the backup. When the hotnode later unpins, it flips the state to `archived`
 (that can be another small endpoint when we get there).
 
-**Service auth (phase 2, the hotnode on the same VPS):** the hotnode sends
-`Authorization: Bearer <MIGRATOR_SERVICE_TOKEN>`. It is accepted **only** when
-the TCP peer is loopback (`req.socket.remoteAddress`, never `X-Forwarded-For`)
-and the token is set. `s3_migrated_by` is set to `service:hotnode`.
+**Service API (the hotnode on the same VPS):** a **separate listener** on
+`127.0.0.1:SERVICE_PORT` (default 3021), started only when
+`MIGRATOR_SERVICE_TOKEN` is set, and never proxied by nginx. With nginx on the
+same machine every public request also arrives from `127.0.0.1`, so a loopback
+check on the public listener would protect nothing.
+
+- It takes `Authorization: Bearer <MIGRATOR_SERVICE_TOKEN>` and also checks
+  that the TCP peer is loopback.
+- It exposes only `POST /api/jobs` (default `mode: 'hot'`) and
+  `GET /api/jobs/:id` and `/api/items/:id`.
+- The public listener never accepts the token.
+- `s3_migrated_by` is set to `service:hotnode`.
+
+All `/api` answers carry `Cache-Control: no-store`. Static files revalidate by
+ETag on every load, so a deploy shows up on the next reload.
 
 ---
 

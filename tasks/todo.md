@@ -23,10 +23,10 @@ Spec: ../SPEC.md. Rule: **a video is "done" only when the CAR is verified, the S
 - [ ] **On the VPS: `npm run smoke:s3` must pass before Phase 4** (real Buttercloud gateway, zone, CORS)
 
 ## Phase 3: auth + API + UI
-- [ ] auth.js: challenge / verify with dhive, allowlist, signed cookie, service token from loopback only (+ negative tests)
-- [ ] server.js: routes from §8, server-side auth on every route that changes something, SSE
-- [ ] Dry run (§5), Check IPFS + Revert (§6)
-- [ ] UI: login, channel table + select all, dry-run → confirm, progress bars, history, disk meter
+- [x] auth.js: challenge / verify with dhive, allowlist, signed cookie, service token from loopback only (+ negative tests)
+- [x] server.js: routes from §8, server-side auth on every route that changes something, SSE
+- [x] Dry run (§5), Check IPFS + Revert (§6)
+- [x] UI: login, channel table + select all, dry-run → confirm, progress bars, history, disk meter
 
 ## Phase 4: deploy + acceptance
 - [ ] README + DEPLOYMENT (pm2, nginx, env)
@@ -73,3 +73,32 @@ Spec: ../SPEC.md. Rule: **a video is "done" only when the CAR is verified, the S
 - Risk: the local buttercloud checkout buffers bodies, forwards with a 30 s timeout,
   and has no raw body parser configured. I can't tell whether production matches,
   hence `smoke:s3`, which must pass on the VPS before any real migration.
+
+### Phase 3 (2026-11-11)
+- `npm test`: 184 passed. `npm run lint`: clean.
+- auth.js: Keychain challenge/verify (posting key, enough weight alone, Hive API
+  failover), HMAC session cookie (HttpOnly, Secure, SameSite=Strict, 12 h), and the
+  allowed list checked on every request. server.js: open read routes, allowed-only
+  actions, JSON + same-origin for every request that changes something, SSE.
+  actions.js: Check IPFS and Revert as queue items. dryRun.js. public/: the page.
+- Design changes from the spec (SPEC updated): the service API gets its own
+  127.0.0.1 listener (behind a local nginx every request comes from 127.0.0.1);
+  Check IPFS and Revert run as queue jobs.
+- Mutation checks: switching off any of these fails a test: the loopback check (tested
+  over a real connection from the LAN address), the allowed list, the origin check,
+  the posting-key check, burning the challenge, the liveness check before revert.
+- Browser run (harness: in-memory Mongo, fake S3, local gateway serving the real CAR
+  of QmUaWTmY…, a stand-in for the Keychain extension): login, dry run, migrating 2 videos
+  that share a CID (the second skipped all 5 uploads), revert (the document back to
+  its 8 original fields, S3 untouched), the view-only account (every action disabled
+  with the reason), phone width with no sideways scroll.
+- Bugs found in the browser run: login failed whenever PUBLIC_BASE_URL had a port
+  (the challenge was split on ':'), now looked up by the whole string with a
+  test; the session block showed while logged out (`display:flex` beat `hidden`);
+  `confirm()` replaced by the page's own dialog; the disk meter only updated every
+  15 s.
+- A wrong lead, for the record: the stale IDs in one run came from my navigation
+  (only the #hash changed, so the page never reloaded), not from caching. `no-store`
+  on /api stays anyway: it is live state.
+- Not done: nothing has touched the real Buttercloud, Mongo or Keychain yet (Phase 4).
+

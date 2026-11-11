@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snapie Migrator</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>Snapie Migrator</h1>
+      <p class="tagline">Copies a channel's videos from IPFS into the Buttercloud bucket, checks every byte, then points the player at it.</p>
+    </div>
+    <div class="who" id="who">
+      <form id="login" class="login" hidden>
+        <label for="login-user" class="sr">Hive account</label>
+        <input id="login-user" name="user" placeholder="Hive account" autocomplete="username" spellcheck="false" required>
+        <button type="submit" class="btn primary">Log in with Keychain</button>
+      </form>
+      <div id="session" class="session" hidden>
+        <span id="session-user"></span>
+        <span id="session-badge" class="badge"></span>
+        <button id="logout" type="button" class="btn quiet">Log out</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="bar">
+    <form id="channel-form" class="channel">
+      <label for="channel">Channel</label>
+      <input id="channel" name="channel" placeholder="hive username" spellcheck="false" autocomplete="off" required>
+      <button class="btn" type="submit">Load videos</button>
+    </form>
+    <dl class="facts" id="facts"></dl>
+  </section>
+
+  <p id="notice" class="notice" role="status" hidden></p>
+
+  <main class="layout">
+    <section class="videos" aria-labelledby="videos-title">
+      <div class="videos-head">
+        <h2 id="videos-title">Videos</h2>
+        <div class="actions">
+          <label class="check-all"><input type="checkbox" id="select-all" disabled> <span id="select-all-label">Select all eligible</span></label>
+          <button id="dry-run" type="button" class="btn" disabled>Dry run</button>
+          <button id="migrate" type="button" class="btn primary" disabled>Migrate selected</button>
+        </div>
+      </div>
+      <p id="videos-empty" class="empty">Enter a channel above to list its videos from both collections.</p>
+      <table id="videos" class="table" hidden>
+        <thead>
+          <tr>
+            <th class="c-pick"><span class="sr">Select</span></th>
+            <th>Video</th>
+            <th class="c-store">Plays from</th>
+            <th class="c-cid">CID</th>
+            <th class="c-do"><span class="sr">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <aside class="queue" aria-labelledby="queue-title">
+      <div class="queue-head">
+        <h2 id="queue-title">Queue</h2>
+        <span id="live" class="live" title="Live updates">offline</span>
+      </div>
+      <div id="disk" class="disk"></div>
+      <ol id="jobs" class="jobs"></ol>
+      <p id="jobs-empty" class="empty">Nothing has run yet.</p>
+    </aside>
+  </main>
+
+  <dialog id="plan" class="plan">
+    <form method="dialog" class="plan-inner">
+      <h2>Dry run</h2>
+      <p id="plan-summary"></p>
+      <div id="plan-body" class="plan-body"></div>
+      <div class="plan-actions">
+        <button value="cancel" class="btn quiet">Close</button>
+        <button id="plan-confirm" value="confirm" class="btn primary">Start migration</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="ask" class="plan narrow">
+    <form method="dialog" class="plan-inner">
+      <h2 id="ask-title"></h2>
+      <p id="ask-text"></p>
+      <div class="plan-actions">
+        <button value="no" class="btn quiet">Keep it in S3</button>
+        <button id="ask-yes" value="yes" class="btn primary"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="detail" class="plan">
+    <form method="dialog" class="plan-inner">
+      <h2 id="detail-title">Item</h2>
+      <div id="detail-body" class="plan-body"></div>
+      <div class="plan-actions"><button value="close" class="btn quiet">Close</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

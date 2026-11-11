@@ -9,6 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { DiskBudget } from '../src/disk.js';
 import { CancelledError, ChangedError, NotEligibleError, VerifyError } from '../src/errors.js';
+import { runAny } from '../src/actions.js';
 import { runItem } from '../src/pipeline.js';
 import { MIN_PART_SIZE, createBucket, createS3Client } from '../src/s3.js';
 import { buildDag, carBytes, videoFiles } from './helpers/car.js';
@@ -278,3 +279,55 @@ describe('runItem: refuses to finish', () => {
     expect(gatewayMode.hits).toBe(0);
   });
 });
+
+describe('Check IPFS and Revert', () => {
+  const migrated = async () => {
+    const id = await insertLegacy();
+    await runItem(item(id), deps());
+    return id;
+  };
+
+  it('check: downloads from the IPFS nodes and verifies, writes nothing', async () => {
+    const id = await migrated();
+    const before = await db.collection('videos').findOne({ _id: id });
+    const r = await runAny(item(id, { kind: 'check' }), deps());
+    expect(r).toMatchObject({ live: true, cid: dag.cid.toString(), gateway: gatewayUrl, files: files.length });
+    expect(await db.collection('videos').findOne({ _id: id })).toEqual(before);
+    expectClean();
+  });
+
+  it('revert: removes only our fields; the S3 copy stays', async () => {
+    const id = await migrated();
+    const keys = s3Keys();
+    const r = await runAny(item(id, { kind: 'revert' }), deps());
+    expect(r.reverted).toBe(true);
+    const doc = await db.collection('videos').findOne({ _id: id });
+    for (const f of ['storage_state', 's3_url', 's3_car_url', 's3_bytes', 's3_files', 's3_migrated_at', 's3_migrated_by']) expect(doc[f]).toBeUndefined();
+    expect(doc).toMatchObject({ video_v2: `ipfs://${dag.cid}/manifest.m3u8`, status: 'published', views: 42, title: 'T' });
+    expect(s3Keys()).toEqual(keys);
+    expectClean();
+  });
+
+  it('revert refuses when the CID is not complete on IPFS', async () => {
+    const id = await migrated();
+    gatewayMode.tamper = true;
+    await expect(runAny(item(id, { kind: 'revert' }), deps())).rejects.toThrow(/no gateway served the CAR|does not match/);
+    expect((await db.collection('videos').findOne({ _id: id })).storage_state).toBe('archived');
+    expectClean();
+  });
+
+  it('revert refuses a video the migrator did not migrate', async () => {
+    const id = await insertLegacy({ storage_state: 'archived', s3_url: zone() });
+    gatewayMode.hits = 0;
+    await expect(runAny(item(id, { kind: 'revert' }), deps())).rejects.toThrow(NotEligibleError);
+    expect(gatewayMode.hits).toBe(0);
+  });
+
+  it('revert refuses when someone changed the document meanwhile', async () => {
+    const id = await migrated();
+    const onProgress = async (p) => { if (p.stage === 'verify') await db.collection('videos').updateOne({ _id: id }, { $set: { s3_url: 'changed' } }); };
+    await expect(runAny(item(id, { kind: 'revert' }), deps(), { onProgress })).rejects.toThrow(ChangedError);
+    expect((await db.collection('videos').findOne({ _id: id })).s3_url).toBe('changed');
+  });
+});
+

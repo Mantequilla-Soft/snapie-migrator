@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at TEXT NOT NULL,
   created_by TEXT NOT NULL,
   channel TEXT,
-  mode TEXT NOT NULL
+  mode TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'migrate'
 );
 CREATE TABLE IF NOT EXISTS items (
   id INTEGER PRIMARY KEY,
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS items (
   title TEXT,
   cid TEXT,
   mode TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'migrate',   -- migrate | check | revert
   by TEXT NOT NULL,
   status TEXT NOT NULL,            -- queued | running | done | failed | cancelled
   stage TEXT,
@@ -144,15 +146,16 @@ export class Queue extends EventEmitter {
    * Add a job. Items already queued or running are left out (reported in `skipped`).
    * items: [{ collection, docId, owner, permlink, title, cid }]
    */
-  enqueue({ by, channel = null, mode = 'archived', items }) {
+  enqueue({ by, channel = null, mode = 'archived', kind = 'migrate', items }) {
     if (!by) throw new Error('by is required');
+    if (!['migrate', 'check', 'revert'].includes(kind)) throw new Error(`unknown kind ${kind}`);
     if (!Array.isArray(items) || !items.length) throw new Error('no items');
     const active = this.db.prepare(`SELECT id FROM items WHERE collection = ? AND doc_id = ? AND status IN ('queued', 'running')`);
-    const insert = this.db.prepare(`INSERT INTO items (job_id, collection, doc_id, owner, permlink, title, cid, mode, by, status, created_at, updated_at)
-      VALUES (@job_id, @collection, @doc_id, @owner, @permlink, @title, @cid, @mode, @by, 'queued', @at, @at)`);
+    const insert = this.db.prepare(`INSERT INTO items (job_id, collection, doc_id, owner, permlink, title, cid, mode, kind, by, status, created_at, updated_at)
+      VALUES (@job_id, @collection, @doc_id, @owner, @permlink, @title, @cid, @mode, @kind, @by, 'queued', @at, @at)`);
     const result = this.db.transaction(() => {
       const at = this.iso();
-      const jobId = Number(this.db.prepare('INSERT INTO jobs (created_at, created_by, channel, mode) VALUES (?, ?, ?, ?)').run(at, by, channel, mode).lastInsertRowid);
+      const jobId = Number(this.db.prepare('INSERT INTO jobs (created_at, created_by, channel, mode, kind) VALUES (?, ?, ?, ?, ?)').run(at, by, channel, mode, kind).lastInsertRowid);
       const added = [];
       const skipped = [];
       for (const it of items) {
@@ -161,13 +164,13 @@ export class Queue extends EventEmitter {
         if (dup) { skipped.push({ ...it, reason: `already in the queue (item ${dup.id})` }); continue; }
         const id = Number(insert.run({
           job_id: jobId, collection: it.collection, doc_id: docId, owner: it.owner ?? null, permlink: it.permlink ?? null,
-          title: it.title ?? null, cid: it.cid ?? null, mode, by, at,
+          title: it.title ?? null, cid: it.cid ?? null, mode, kind, by, at,
         }).lastInsertRowid);
         added.push(id);
       }
       return { jobId, added, skipped };
     })();
-    for (const id of result.added) this.event(id, 'info', `queued by ${by}`);
+    for (const id of result.added) this.event(id, 'info', `${kind} queued by ${by}`);
     this.tick();
     return result;
   }
@@ -205,7 +208,7 @@ export class Queue extends EventEmitter {
       }
     };
 
-    const item = { id: row.id, collection: row.collection, docId: row.doc_id, mode: row.mode, by: row.by };
+    const item = { id: row.id, collection: row.collection, docId: row.doc_id, mode: row.mode, kind: row.kind, by: row.by };
     entry.promise = (async () => {
       try {
         const result = await this.run(item, this.deps, { signal: ctrl.signal, onProgress });
