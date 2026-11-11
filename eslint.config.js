@@ -5,7 +5,7 @@ export default [
   { ignores: ['node_modules/**', 'coverage/**', 'work/**', 'data/**'] },
   js.configs.recommended,
   {
-    files: ['src/**/*.js', 'tests/**/*.js', '*.js'],
+    files: ['src/**/*.js', 'tests/**/*.js', 'scripts/**/*.js', '*.js'],
     languageOptions: { ecmaVersion: 2023, sourceType: 'module', globals: { ...globals.node } },
   },
   {

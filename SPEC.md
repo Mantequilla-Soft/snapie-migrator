@@ -138,16 +138,22 @@ Each stage is saved to SQLite, so a restart picks up where it stopped (§7).
      `application/vnd.apple.mpegurl`, `ts` → `video/mp2t`, `mp4`, `jpg`/`png`, …)
      and `Cache-Control: public, max-age=31536000, immutable`.
    - Then the CAR goes to `car/<cid>.car`.
-   - Files ≤ 5 GB use a single PUT, so MinIO returns an MD5 ETag. Larger ones
-     use multipart, which Buttercloud's gateway supports.
-   - Objects already present with the same size and MD5 are skipped, so a
+   - Bodies go up as buffers of at most 8 MB, because Buttercloud's gateway
+     buffers each request and forwards it to MinIO with a 30 s timeout. Anything
+     bigger goes up as multipart in 8 MB parts.
+   - Every PUT and part carries `Content-MD5`, so MinIO rejects a corrupted body.
+   - The expected ETag is computed locally: the MD5 for a single PUT, and the MD5
+     of the parts' MD5s plus `-N` for multipart. So every object, including a
+     multi-GB CAR, is checked exactly with no read-back of the whole thing.
+   - Objects already present with the same size and ETag are skipped, so a
      resumed job doesn't upload them again.
 6. **Check S3.** All of these must pass:
    - `ListObjectsV2` on `<cid>/` returns exactly the expected keys, with no
      missing keys and none extra.
    - Every object's `HEAD` size matches.
-   - Every single-part object's ETag equals the MD5 we computed. Multipart
-     objects (the large CAR) are compared by size plus a full read-back SHA-256.
+   - Every object's ETag equals the one computed locally (step 5), the large CAR
+     included. No object may be missing, and no extra object may appear under
+     `<cid>/`.
    - A playback check over HTTPS through **the Bunny zone and through
      s3.3speak.tv**: download the master manifest, every variant playlist, and
      the first and last segment of each variant. Each one's hash must match the
