@@ -20,10 +20,11 @@ const budget = new DiskBudget({ dir: cfg.workDir, budgetBytes: cfg.diskBudgetByt
 const t0 = Date.now();
 try {
   await budget.assertCanStart();
-  const dl = await downloadCar({ cid, gateways: cfg.sourceGateways, dest, budget });
+  // Same as a migration: each gateway's CAR is verified before it is accepted.
+  const dl = await downloadCar({ cid, gateways: cfg.sourceGateways, dest, budget, verify: (p) => openVerifiedCar(p, cid) });
   for (const a of dl.attempts) console.log(`skipped ${a.gateway}: ${a.error}`);
   console.log(`downloaded ${dl.bytes} bytes from ${dl.gateway} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  const car = await openVerifiedCar(dest, cid);
+  const car = dl.verified;
   console.log(`verified: root ok, ${car.blocks} blocks hash-checked, ${car.files.length} files, ${car.bytes} bytes`);
   for (const f of car.files) console.log(`  ${f.path}  ${f.size}`);
   await car.close();

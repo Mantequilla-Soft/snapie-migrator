@@ -26,27 +26,42 @@ export const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
  * Download `<gateway>/ipfs/<cid>/` as a CAR to `dest`, trying each gateway in order.
  * The header form with a trailing slash and no query string is the one the hotnode's
  * nginx serves (it 302-redirects `?format=car` and the bare `/ipfs/<cid>`).
- * → { gateway, bytes, md5, sha256, attempts: [{ gateway, error }] }
+ *
+ * `verify(dest)` (optional) runs on each download before it is accepted. A gateway
+ * that doesn't have the CID can still answer 200 with a CAR of just the header and
+ * no blocks (the hotnode and the Bunny zone both do), so a CAR that fails
+ * verification counts as that gateway failing, and the next one is tried. Every
+ * block is hash-checked, so whichever CAR passes is proven correct.
+ *
+ * → { gateway, bytes, md5, sha256, verified, attempts: [{ gateway, error }] }
+ * When every gateway fails: VerifyError if each one served bad data (a person should
+ * look; retrying won't help), else a plain Error (network trouble: retried later).
  */
 export async function downloadCar({
   cid, gateways, dest, budget, throttle, signal, onProgress = () => {},
-  fetchImpl = fetch, idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS,
+  fetchImpl = fetch, idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS, verify = null,
 }) {
   const attempts = [];
   for (const gateway of gateways) {
     throwIfAborted(signal);
+    let result = null;
     try {
-      const result = await downloadFrom({ gateway, cid, dest, budget, throttle, signal, onProgress, fetchImpl, idleTimeoutMs });
-      return { gateway, ...result, attempts };
+      result = await downloadFrom({ gateway, cid, dest, budget, throttle, signal, onProgress, fetchImpl, idleTimeoutMs });
+      const verified = verify ? await verify(dest, { gateway }) : undefined;
+      return { gateway, ...result, verified, attempts: attempts.map(({ gateway: g, error }) => ({ gateway: g, error })) };
     } catch (err) {
       await fs.promises.rm(dest, { force: true });
+      if (result) budget.release(result.bytes);   // a downloaded CAR that failed verification
       // Out of space or cancelled: another gateway won't help.
       if (err instanceof OutOfSpaceError || err instanceof CancelledError) throw err;
-      attempts.push({ gateway, error: err.message });
+      attempts.push({ gateway, error: err instanceof VerifyError ? `bad CAR: ${err.message}` : err.message, verify: err instanceof VerifyError });
     }
   }
-  const err = new Error(`no gateway served the CAR: ${attempts.map((a) => `${a.gateway}: ${a.error}`).join('; ')}`);
-  err.attempts = attempts;
+  const summary = attempts.map((a) => `${a.gateway}: ${a.error}`).join('; ');
+  const err = attempts.length && attempts.every((a) => a.verify)
+    ? new VerifyError(`no gateway served a complete, valid CAR: ${summary}`)
+    : new Error(`no gateway served the CAR: ${summary}`);
+  err.attempts = attempts.map(({ gateway, error }) => ({ gateway, error }));
   throw err;
 }
 
@@ -70,7 +85,9 @@ async function downloadFrom({ gateway, cid, dest, budget, throttle, signal, onPr
       });
     } catch (e) {
       if (signal?.aborted) throw new CancelledError();
-      throw new Error(ctrl.signal.reason?.message === 'idle timeout' ? 'timed out' : e.message, { cause: e });
+      // undici says only "fetch failed"; the reason (ECONNRESET, ENOTFOUND, …) is in cause.
+      const why = e.cause?.code || e.cause?.message;
+      throw new Error(ctrl.signal.reason?.message === 'idle timeout' ? 'timed out' : `${e.message}${why ? ` (${why})` : ''}`, { cause: e });
     }
     if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
     const type = res.headers.get('content-type') || '';

@@ -89,20 +89,26 @@ export async function runItem(item, deps, { signal, onProgress = () => {} } = {}
     await budget.assertCanStart();
     throwIfAborted(signal);
 
-    // 3. download the CAR
+    // 3–4. download the CAR and verify it, gateway by gateway: one that lacks the
+    // video may still answer 200 with an empty CAR, so a bad CAR moves on to the next.
     stage('download', { cid });
     const dl = await downloadCar({
       cid, gateways: cfg.sourceGateways, dest, budget, throttle, signal, fetchImpl,
       onProgress: ({ bytes }) => stage('download', { cid, bytesDone: bytes }),
+      verify: async (p, { gateway }) => {
+        stage('verify', { cid, gateway });
+        const opened = await openVerifiedCar(p, cid, { signal, onProgress: (x) => stage('verify', { cid, ...x }) });
+        if (!opened.files.some((f) => f.path === manifestPath)) {
+          await opened.close();
+          throw new VerifyError(`${manifestPath} is not in ${cid}: the player could not play it`);
+        }
+        return opened;
+      },
     });
     carBytes = dl.bytes;
+    car = dl.verified;
     for (const a of dl.attempts) warnings.push(`${a.gateway} failed: ${a.error}`);
-
-    // 4. verify
-    stage('verify', { cid });
-    car = await openVerifiedCar(dest, cid, { signal, onProgress: (p) => stage('verify', { cid, ...p }) });
     const filesByPath = new Map(car.files.map((f) => [f.path, f]));
-    if (!filesByPath.has(manifestPath)) throw new VerifyError(`${manifestPath} is not in ${cid}: the player could not play it`);
 
     // 5. upload what isn't there yet (a resumed item skips what it already sent)
     const existing = await bucket.list(`${cid}/`, { signal });

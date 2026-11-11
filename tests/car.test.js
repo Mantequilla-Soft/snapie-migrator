@@ -10,13 +10,14 @@ import { CancelledError, OutOfSpaceError, VerifyError } from '../src/errors.js';
 import { buildDag, carBytes, videoFiles, writeCar } from './helpers/car.js';
 
 const md5 = (b) => crypto.createHash('md5').update(b).digest('hex');
-let dir, files, dag, good;
+let dir, files, dag, good, emptyCar;
 
 beforeAll(async () => {
   dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'migrator-car-'));
   files = videoFiles({ segments: 3, segmentBytes: 5000 });
   dag = await buildDag(files);
   good = await carBytes([dag.cid], dag.blocks);
+  emptyCar = await carBytes([dag.cid], []);
 });
 afterAll(() => fs.promises.rm(dir, { recursive: true, force: true }));
 
@@ -89,6 +90,8 @@ describe('downloadCar', () => {
       if (gw === 'redirect') { res.writeHead(302, { location: '/elsewhere' }); return res.end(); }
       if (gw === 'html') { res.writeHead(200, { 'content-type': 'text/html' }); return res.end('<html>'); }
       if (gw === 'down') { res.writeHead(502); return res.end(); }
+      // A gateway without the CID: 200 and a CAR of just the header (what the hotnode does).
+      if (gw === 'empty') { res.writeHead(200, { 'content-type': 'application/vnd.ipld.car; version=1' }); return res.end(emptyCar); }
       if (gw === 'stall') { res.writeHead(200, { 'content-type': 'application/vnd.ipld.car; version=1' }); res.write(good.subarray(0, 100)); return; }
       res.writeHead(200, { 'content-type': 'application/vnd.ipld.car; version=1; order=dfs; dups=n' });
       res.end(good);
@@ -146,4 +149,34 @@ describe('downloadCar', () => {
     await run(['ok'], { budget: b });
     expect(b.used).toBe(good.length);
   });
+
+  describe('with verify: a CAR that fails verification counts as that gateway failing', () => {
+    const verifyWith = (dest) => openVerifiedCar(dest, dag.cid.toString()).then(async (c) => { const n = c.files.length; await c.close(); return n; });
+
+    it('a header-only CAR (gateway without the video) moves on to the next gateway', async () => {
+      expect(emptyCar.length).toBeLessThan(100);
+      const b = budget();
+      const r = await run(['empty', 'ok'], { verify: verifyWith, budget: b });
+      expect(r.gateway).toBe(`${base}/ok`);
+      expect(r.verified).toBe(files.length);
+      expect(r.attempts).toEqual([{ gateway: `${base}/empty`, error: expect.stringMatching(/^bad CAR: .*missing/) }]);
+      expect(b.used).toBe(good.length);            // the empty CAR's bytes were given back
+    });
+
+    it('every gateway serving bad data: VerifyError (a person should look)', async () => {
+      const dest = path.join(dir, 'allbad.car');
+      const err = await run(['empty', 'empty'], { verify: verifyWith, dest }).catch((e) => e);
+      expect(err).toBeInstanceOf(VerifyError);
+      expect(err.message).toMatch(/no gateway served a complete, valid CAR/);
+      expect(err.attempts).toHaveLength(2);
+      expect(fs.existsSync(dest)).toBe(false);
+    });
+
+    it('bad data from one and a network error from another: a plain Error (retried later)', async () => {
+      const err = await run(['empty', 'down'], { verify: verifyWith }).catch((e) => e);
+      expect(err).not.toBeInstanceOf(VerifyError);
+      expect(err.message).toMatch(/no gateway served the CAR: .*bad CAR.*HTTP 502/);
+    });
+  });
 });
+
