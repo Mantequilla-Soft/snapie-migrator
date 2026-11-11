@@ -1,0 +1,27 @@
+{
+  "name": "snapie-migrator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal tool: copy a channel's 3Speak videos from IPFS to the Buttercloud S3 bucket and point the player at them.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "dotenv": "^18.0.10",
+    "mongodb": "^7.8.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "mongodb-memory-server": "^11.3.0",
+    "vitest": "^5.1.0"
+  }
+}
