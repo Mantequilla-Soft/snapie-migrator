@@ -140,13 +140,57 @@ Run these in order, and stop at the first one that fails.
   record of who migrated what, and when.
 - **Nothing to clean up:** `work/` is emptied after every item and at every start.
 
-## 7. Updating
+## 7. CI/CD
+
+The pipeline lives in `.github/workflows/`:
+
+| Workflow | When | What |
+|---|---|---|
+| `ci.yml` | every pull request to `master` | lint and tests on Node 20 and 22. The player is checked out next to the migrator, so the drift test runs the migrator's `s3_url` through the player's own `s3Parts` (it fails, not skips, if the player is missing). Also shellcheck of `scripts/deploy.sh` and `npm audit` of production dependencies (high or critical fails). |
+| `deploy.yml` | every push to `master`, or by hand | runs `ci.yml` first (nothing untested deploys), then SSHes into the VPS and runs `scripts/deploy.sh <sha>`, taken from the commit being deployed. |
+| `dependabot.yml` | weekly (npm) and monthly (actions) | opens update PRs, which go through CI like any other. |
+
+**`scripts/deploy.sh`** checks out the commit, runs `npm ci --omit=dev` and
+`pm2 startOrRestart`. It then waits for `/api/status` to report **that commit**
+as the running version. A port that answers with the old version doesn't count.
+If the new commit doesn't come up healthy, the script checks out the previous
+commit again, restarts, and the workflow fails. Running migrations go back in the
+queue on every restart and resume on boot.
+
+### One-time CI/CD setup
+
+- [ ] Do the server setup from sections 1–4 by hand once. The deploy refuses to
+      run where there is no `.env`.
+- [ ] The deploy user must be able to run `git`, `npm`, `pm2` and `curl` over a
+      non-interactive SSH session. An nvm install is loaded automatically.
+- [ ] The deploy user must be able to `git fetch` the repo. A public repo works as
+      is; for a private one, add a read-only deploy key on the server.
+- [ ] Repository secrets (Settings → Secrets → Actions), the same three as the
+      player:
+      `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (a private key whose public half is in
+      the deploy user's `authorized_keys`), and optionally `VPS_PORT`.
+- [ ] Optional repository variable `DEPLOY_PATH` (default `/var/www/snapie-migrator`).
+- [ ] The `production` environment is created on the first deploy. Add required
+      reviewers there if a person should approve each deploy.
+
+### Rollback by hand
+
+The deploy rolls back on its own when a commit doesn't come up. To go back to an
+older commit that did come up but misbehaves, revert it in a PR, or on the server:
 
 ```bash
 cd /var/www/snapie-migrator
-git pull
-npm ci --omit=dev
-pm2 restart snapie-migrator
+bash scripts/deploy.sh <last-good-sha>
 ```
 
-Before pushing a change: `npm run lint && npm test`.
+### Known audit findings
+
+`npm audit` reports three **low** advisories in `elliptic`, which comes in
+through `@hiveio/dhive`. There is no fix upstream. The advisory is about
+producing signatures; the migrator only uses dhive to recover the key from a
+Keychain signature, and never signs anything. CI fails on high or critical
+advisories only.
+
+## 8. Before pushing a change
+
+`npm run lint && npm test`

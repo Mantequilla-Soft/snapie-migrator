@@ -3,6 +3,7 @@
  * On SIGTERM/SIGINT: stop listening, put running items back in the queue, close.
  */
 import 'dotenv/config';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { MongoClient } from 'mongodb';
@@ -36,11 +37,15 @@ const queue = new Queue({
   deps: pipelineDeps, run: runAny,
 });
 const auth = createAuth(cfg);
-const deps = { ...pipelineDeps, queue, auth };
+// The commit running, so a deploy can confirm the new code is live (GET /api/status).
+const version = (() => {
+  try { return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: path.resolve(import.meta.dirname, '..') }).toString().trim(); } catch (_) { return null; }
+})();
+const deps = { ...pipelineDeps, queue, auth, version };
 
 const { requeued } = queue.start();
 const server = createApp(deps).listen(cfg.port, cfg.host, () => {
-  console.log(`[migrator] ${cfg.publicBaseUrl} on ${cfg.host}:${cfg.port}, bucket ${cfg.s3.bucket}, ${cfg.maxConcurrent} at a time, allowed: ${cfg.allowedUsers.join(', ')}`);
+  console.log(`[migrator] ${version?.slice(0, 7) ?? 'unknown version'} ${cfg.publicBaseUrl} on ${cfg.host}:${cfg.port}, bucket ${cfg.s3.bucket}, ${cfg.maxConcurrent} at a time, allowed: ${cfg.allowedUsers.join(', ')}`);
   if (requeued) console.log(`[migrator] ${requeued} interrupted item(s) queued again`);
 });
 const service = cfg.serviceToken

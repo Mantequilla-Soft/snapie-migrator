@@ -120,9 +120,13 @@ describe('filters', () => {
   });
 });
 
-// Drift guard: when the player repo sits next to this one, run our URLs through the
-// player's own s3Parts. Skipped elsewhere (e.g. on the VPS).
-const PLAYER = path.resolve(import.meta.dirname, '../../SnapieVideoPlayer/hlsGateways.js');
+// Drift guard: run our URLs through the player's own s3Parts. The player is found next
+// to this repo, or at PLAYER_REPO_DIR (CI checks it out there and sets
+// REQUIRE_PLAYER_CROSSCHECK=1, so a missing player fails instead of skipping).
+const PLAYER = path.resolve(process.env.PLAYER_REPO_DIR || path.resolve(import.meta.dirname, '../../SnapieVideoPlayer'), 'hlsGateways.js');
+if (process.env.REQUIRE_PLAYER_CROSSCHECK === '1' && !fs.existsSync(PLAYER)) {
+  throw new Error(`REQUIRE_PLAYER_CROSSCHECK is set but ${PLAYER} does not exist`);
+}
 describe.skipIf(!fs.existsSync(PLAYER))('cross-check with the player (SnapieVideoPlayer/hlsGateways.js)', () => {
   const load = () => {
     process.env.S3_BUCKET = s3.bucket;

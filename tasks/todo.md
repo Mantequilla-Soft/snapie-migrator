@@ -115,3 +115,22 @@ Spec: ../SPEC.md. Rule: **a video is "done" only when the CAR is verified, the S
 - Left for the VPS (needs the real credentials): smoke:s3, check:car, a real
   Keychain login, the coolmole run (DEPLOYMENT.md section 5).
 
+### CI/CD (2026-11-11)
+- ci.yml (PRs, and called by deploy): lint + tests on Node 20 and 22, with the player
+  checked out so the drift test runs (it fails, not skips, if the player is missing);
+  shellcheck of deploy.sh; npm audit (prod deps, high+).
+- deploy.yml (push to master / by hand): CI first, then SSH → scripts/deploy.sh taken
+  from the deployed commit. No cancelling halfway; `production` environment.
+- deploy.sh: refuses without .env or tools on PATH (loads nvm); npm ci --omit=dev,
+  pm2 startOrRestart; healthy = /api/status reports the new SHA; otherwise rolls back
+  to the previous commit and exits 1.
+- /api/status now reports `version` (the running commit).
+- Simulated on a throwaway clone with stub pm2/npm and a fake app: a good deploy is
+  live; a commit that crashes on boot rolls back by itself (exit 1); a pm2 that
+  doesn't restart is caught by the version check; a missing .env or tool exits 2
+  with the reason.
+- Not verified here: shellcheck and actionlint aren't installed locally. They run on
+  GitHub on the first PR.
+- Audit: 3 low advisories (elliptic via dhive, no fix upstream; it's about signing,
+  and we only verify). Documented in DEPLOYMENT.md.
+

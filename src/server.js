@@ -107,6 +107,7 @@ export function createApp(deps) {
 
   // --- read-only ---
   app.get('/api/status', (_req, res) => res.json({
+    version: deps.version ?? null,
     bucket: cfg.s3.bucket, cdnHost: cfg.s3.cdnHost, sources: cfg.sourceGateways, maxConcurrent: cfg.maxConcurrent,
     running: queue.running.size, disk: budget.snapshot(), playerCheck: !!cfg.playerBaseUrl,
   }));

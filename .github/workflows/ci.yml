@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_call: {}       # deploy.yml runs this first, so nothing deploys untested
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      # The player, so the drift test runs our s3_url through its own s3Parts.
+      - uses: actions/checkout@v4
+        with:
+          repository: Mantequilla-Soft/snapievideoplayer
+          ref: master
+          path: player
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # mongodb-memory-server downloads a ~120 MB mongod on first use.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: mongodb-binaries-${{ runner.os }}-
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+        env:
+          PLAYER_REPO_DIR: ${{ github.workspace }}/player
+          REQUIRE_PLAYER_CROSSCHECK: '1'
+
+  checks:
+    name: Scripts and dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Shellcheck the deploy script
+        run: shellcheck scripts/deploy.sh
+
+      - run: npm ci --omit=dev
+
+      # Production dependencies only; high and critical advisories fail the build.
+      - name: Audit
+        run: npm audit --omit=dev --audit-level=high

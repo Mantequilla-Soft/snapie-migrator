@@ -1,0 +1,41 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancel one halfway through (npm ci + restart).
+concurrency:
+  group: deploy-migrator
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy via SSH (rolls back by itself if unhealthy)
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 15m
+          script: |
+            set -e
+            cd "${{ vars.DEPLOY_PATH || '/var/www/snapie-migrator' }}"
+            git fetch origin --prune
+            # The deploy script of the commit being deployed, not of the one running.
+            tmp="$(mktemp)"
+            trap 'rm -f "$tmp"' EXIT
+            git show "${{ github.sha }}:scripts/deploy.sh" > "$tmp"
+            bash "$tmp" "${{ github.sha }}"
