@@ -32,11 +32,19 @@ export async function checkLive({ cfg, budget, throttle, fetchImpl }, { cid, man
     const dl = await downloadCar({
       cid, gateways: cfg.ipfsGateways, dest, budget, throttle, signal, fetchImpl,
       onProgress: (p) => onProgress({ stage: 'download', cid, bytesDone: p.bytes }),
+      // Same as a migration: a node without the CID may answer with an empty CAR.
+      verify: async (p, { gateway }) => {
+        onProgress({ stage: 'verify', cid, gateway });
+        const opened = await openVerifiedCar(p, cid, { signal, onProgress: (x) => onProgress({ stage: 'verify', cid, ...x }) });
+        if (!opened.files.some((f) => f.path === manifestPath)) {
+          await opened.close();
+          throw new VerifyError(`${manifestPath} is not in ${cid}`);
+        }
+        return opened;
+      },
     });
     bytes = dl.bytes;
-    onProgress({ stage: 'verify', cid });
-    car = await openVerifiedCar(dest, cid, { signal, onProgress: (p) => onProgress({ stage: 'verify', cid, ...p }) });
-    if (!car.files.some((f) => f.path === manifestPath)) throw new VerifyError(`${manifestPath} is not in ${cid}`);
+    car = dl.verified;
     return { cid, gateway: dl.gateway, blocks: car.blocks, files: car.files.length, bytes: car.bytes, attempts: dl.attempts };
   } finally {
     if (car) await car.close().catch(() => {});

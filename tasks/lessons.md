@@ -20,3 +20,12 @@
 - Rule: derive `engines` from `node -p` over every dependency's own `engines` (the
   strictest wins), and test the oldest supported Node in CI.
 
+
+## A 200 from a gateway is not the content
+- The hotnode answers HTTP 200 with a 57-byte, header-only CAR for a CID it doesn't
+  have (the Bunny zone did the same in the very first spike, and I noted it without
+  acting on it). The pipeline treated a bad CAR as final, so one empty answer from
+  the first gateway failed a migration that the next gateway could have served.
+- Rule: with several sources, a source's answer only counts once it has been
+  verified; a verification failure moves on to the next source. Fail for good only
+  when every source has failed.

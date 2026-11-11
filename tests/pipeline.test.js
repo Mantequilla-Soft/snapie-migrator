@@ -171,6 +171,34 @@ describe('runItem: success', () => {
   });
 });
 
+describe('runItem: a gateway without the video', () => {
+  it('an empty CAR from the first gateway (HTTP 200, header only) falls through to the next', async () => {
+    const empty = await carBytes([dag.cid], []);
+    const hot = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/vnd.ipld.car; version=1' });
+      res.end(empty);
+    });
+    await new Promise((r) => hot.listen(0, '127.0.0.1', r));
+    const hotUrl = `http://127.0.0.1:${hot.address().port}`;
+    try {
+      const cfg2 = loadConfig({
+        PUBLIC_BASE_URL: 'https://migrator.test', SESSION_SECRET: 'x'.repeat(40), ALLOWED_USERS: 'meno',
+        MONGODB_URI: mongod.getUri(), S3_ENDPOINT: fake.endpoint, S3_ACCESS_KEY_ID: 'k', S3_SECRET_ACCESS_KEY: 's',
+        S3_BUCKET: 'videos-test', HOTNODE_GATEWAY: hotUrl, IPFS_GATEWAYS: gatewayUrl, WORK_DIR: workDir,
+      });
+      const id = await insertLegacy();
+      const r = await runItem(item(id), { ...deps(), cfg: cfg2 });
+      expect(r.gateway).toBe(gatewayUrl);
+      expect(r.warnings).toEqual([expect.stringMatching(new RegExp(`^${hotUrl} failed: bad CAR: .*missing`))]);
+      expect((await db.collection('videos').findOne({ _id: id })).storage_state).toBe('archived');
+      expectClean();
+    } finally {
+      hot.closeAllConnections();
+      await new Promise((r) => hot.close(r));
+    }
+  });
+});
+
 describe('runItem: refuses to finish', () => {
   it('a corrupted CAR from the gateway: nothing uploaded, nothing written', async () => {
     const id = await insertLegacy();
