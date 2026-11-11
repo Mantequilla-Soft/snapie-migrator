@@ -39,8 +39,8 @@ const auth = createAuth(cfg);
 const deps = { ...pipelineDeps, queue, auth };
 
 const { requeued } = queue.start();
-const server = createApp(deps).listen(cfg.port, () => {
-  console.log(`[migrator] ${cfg.publicBaseUrl} on :${cfg.port}, bucket ${cfg.s3.bucket}, ${cfg.maxConcurrent} at a time, allowed: ${cfg.allowedUsers.join(', ')}`);
+const server = createApp(deps).listen(cfg.port, cfg.host, () => {
+  console.log(`[migrator] ${cfg.publicBaseUrl} on ${cfg.host}:${cfg.port}, bucket ${cfg.s3.bucket}, ${cfg.maxConcurrent} at a time, allowed: ${cfg.allowedUsers.join(', ')}`);
   if (requeued) console.log(`[migrator] ${requeued} interrupted item(s) queued again`);
 });
 const service = cfg.serviceToken

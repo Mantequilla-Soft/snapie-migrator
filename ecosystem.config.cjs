@@ -3,6 +3,7 @@ module.exports = {
   apps: [{
     name: 'snapie-migrator',
     script: 'src/index.js',
+    cwd: __dirname,          // .env, data/ and work/ are found relative to this folder
     instances: 1,            // one process: the job queue and SQLite state are not shared
     exec_mode: 'fork',
     max_memory_restart: '1G',

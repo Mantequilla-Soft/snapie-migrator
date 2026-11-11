@@ -61,6 +61,9 @@ export function loadConfig(env = process.env) {
 
   // --- web / auth ---
   const port = num('PORT', 3020, { min: 1, max: 65535, int: true });
+  // Behind nginx on the same machine: listen on loopback only, so nothing reaches the
+  // app around nginx. Set HOST=0.0.0.0 only without a proxy in front.
+  const host = str('HOST', '127.0.0.1');
   const publicBaseRaw = required('PUBLIC_BASE_URL');
   const publicBaseUrl = publicBaseRaw ? httpsBase('PUBLIC_BASE_URL', publicBaseRaw) : null;
   const sessionSecret = required('SESSION_SECRET');
@@ -126,6 +129,7 @@ export function loadConfig(env = process.env) {
 
   return Object.freeze({
     port,
+    host,
     publicBaseUrl,
     sessionSecret,
     allowedUsers: Object.freeze(allowedUsers),

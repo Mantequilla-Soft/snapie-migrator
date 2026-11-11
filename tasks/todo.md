@@ -29,7 +29,7 @@ Spec: ../SPEC.md. Rule: **a video is "done" only when the CAR is verified, the S
 - [x] UI: login, channel table + select all, dry-run → confirm, progress bars, history, disk meter
 
 ## Phase 4: deploy + acceptance
-- [ ] README + DEPLOYMENT (pm2, nginx, env)
+- [x] README + DEPLOYMENT (pm2, nginx, env)
 - [ ] VPS: dry run on coolmole → migrate 1 → check S3 playback in DevTools → Check IPFS → Revert → migrate the whole channel
 
 ## Review
@@ -101,4 +101,17 @@ Spec: ../SPEC.md. Rule: **a video is "done" only when the CAR is verified, the S
   (only the #hash changed, so the page never reloaded), not from caching. `no-store`
   on /api stays anyway: it is live state.
 - Not done: nothing has touched the real Buttercloud, Mongo or Keychain yet (Phase 4).
+
+### Phase 4, local part (2026-11-11)
+- README.md and DEPLOYMENT.md (setup, .env, nginx with an unbuffered SSE location,
+  pm2, a step-by-step first run on coolmole, day-to-day operations, updating).
+- The app now listens on 127.0.0.1 by default (`HOST`), so only nginx reaches it;
+  pm2 starts in the project folder (`cwd`); Node >= 20.11 (`import.meta.dirname`).
+- `src/index.js` booted for real (it had only been exercised through the harness):
+  both listeners answer, SIGTERM exits cleanly in 19 ms and releases the ports, and a
+  bad .env is refused with every problem listed (exit 1).
+- I checked the guide's claims against the code and corrected two: changing
+  ALLOWED_USERS needs a restart; in DevTools the S3 zone shows up inside /hls?u=.
+- Left for the VPS (needs the real credentials): smoke:s3, check:car, a real
+  Keychain login, the coolmole run (DEPLOYMENT.md section 5).
 

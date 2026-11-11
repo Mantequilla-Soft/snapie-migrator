@@ -14,6 +14,7 @@ describe('loadConfig', () => {
     expect(c.s3).toMatchObject({ bucket: 'videos-test', cdnHost: 'buttercloud.b-cdn.net', directHost: 's3.3speak.tv', region: 'us-east-1' });
     expect(c.sourceGateways).toEqual(['https://hotipfs-1.3speak.tv', 'https://ipfs.3speak.tv', 'https://ipfs-audio.3speak.tv']);
     expect(c.maxConcurrent).toBe(1);
+    expect(c.host).toBe('127.0.0.1');
     expect(c.diskBudgetBytes).toBe(20 * 1024 ** 3);
     expect(c.diskReserveBytes).toBe(5 * 1024 ** 3);
     expect(c.serviceToken).toBeNull();
