@@ -24,9 +24,14 @@ if ! command -v pm2 >/dev/null 2>&1 && [ -s "$HOME/.nvm/nvm.sh" ]; then
   # shellcheck source=/dev/null
   . "$HOME/.nvm/nvm.sh"
 fi
-for tool in git npm pm2 curl; do
+for tool in git node npm pm2 curl; do
   command -v "$tool" >/dev/null 2>&1 || { log "$tool is not on PATH for $(whoami) over SSH"; exit 2; }
 done
+
+# better-sqlite3 is a native module built for Node 22+: on older Node the app
+# segfaults on boot. Refuse here, with the reason, instead of a pm2 crash loop.
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+[ "$NODE_MAJOR" -ge 22 ] || { log "Node $(node -v) is too old: the migrator needs Node 22.12 or newer"; exit 2; }
 
 [ -f ecosystem.config.cjs ] || { log "run me from the app folder (no ecosystem.config.cjs in $PWD)"; exit 2; }
 [ -f .env ] || { log "no .env in $PWD: do the first setup by hand (DEPLOYMENT.md), then deploy"; exit 2; }

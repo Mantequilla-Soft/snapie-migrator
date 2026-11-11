@@ -13,3 +13,10 @@
   split on ':' breaks when the host has a port) and two layout bugs.
 - Rule: every phase that ships UI or HTTP gets an end-to-end run against a harness
   with the real modules before it is called done.
+
+## Read the dependencies' engines before writing ours
+- I set `engines.node` to >=20.11 from one API the code uses. better-sqlite3 13
+  needs Node 22, and on 20 it segfaults; CI on Node 20 caught it.
+- Rule: derive `engines` from `node -p` over every dependency's own `engines` (the
+  strictest wins), and test the oldest supported Node in CI.
+

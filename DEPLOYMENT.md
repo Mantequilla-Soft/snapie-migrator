@@ -6,9 +6,14 @@ good bandwidth to the IPFS nodes and to Buttercloud. It keeps its job history in
 
 ## 1. One-time setup
 
-- [ ] Node.js **20.11 or newer** (`node -v`). `better-sqlite3` ships prebuilt
-      binaries for Linux x64. If `npm ci` tries to compile it, install
-      `build-essential` and `python3` first.
+- [ ] Node.js **22.12 or newer** (`node -v`). `better-sqlite3` and `vitest` need
+      it, and on Node 20 the app crashes on boot. The deploy script refuses an old
+      Node. If the server must keep Node 20 for other apps (the player's CI uses
+      20), install 22 alongside it with nvm and point pm2 at it: add
+      `interpreter: '/home/<user>/.nvm/versions/node/v22.x.y/bin/node'` to
+      `ecosystem.config.cjs`. `better-sqlite3` ships prebuilt binaries for Linux
+      x64; if `npm ci` tries to compile it, install `build-essential` and
+      `python3` first.
 - [ ] pm2: `npm i -g pm2`, plus `pm2 startup` once so it starts again after a reboot.
 - [ ] Get the code onto the VPS, for example into `/var/www/snapie-migrator`, then:
       ```bash
@@ -146,7 +151,7 @@ The pipeline lives in `.github/workflows/`:
 
 | Workflow | When | What |
 |---|---|---|
-| `ci.yml` | every pull request to `master` | lint and tests on Node 20 and 22. The player is checked out next to the migrator, so the drift test runs the migrator's `s3_url` through the player's own `s3Parts` (it fails, not skips, if the player is missing). Also shellcheck of `scripts/deploy.sh` and `npm audit` of production dependencies (high or critical fails). |
+| `ci.yml` | every pull request to `master` | lint and tests on Node 22 and 24. The player is checked out next to the migrator, so the drift test runs the migrator's `s3_url` through the player's own `s3Parts` (it fails, not skips, if the player is missing). Also shellcheck of `scripts/deploy.sh` and `npm audit` of production dependencies (high or critical fails). |
 | `deploy.yml` | every push to `master`, or by hand | runs `ci.yml` first (nothing untested deploys), then SSHes into the VPS and runs `scripts/deploy.sh <sha>`, taken from the commit being deployed. |
 | `dependabot.yml` | weekly (npm) and monthly (actions) | opens update PRs, which go through CI like any other. |
 

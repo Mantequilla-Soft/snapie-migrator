@@ -15,7 +15,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 22]
+        # better-sqlite3 13 and vitest 5 need Node 22.12+ (Node 20 is end of life).
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v4
 

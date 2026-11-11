@@ -106,7 +106,7 @@ Spec: ../SPEC.md. Rule: **a video is "done" only when the CAR is verified, the S
 - README.md and DEPLOYMENT.md (setup, .env, nginx with an unbuffered SSE location,
   pm2, a step-by-step first run on coolmole, day-to-day operations, updating).
 - The app now listens on 127.0.0.1 by default (`HOST`), so only nginx reaches it;
-  pm2 starts in the project folder (`cwd`); Node >= 20.11 (`import.meta.dirname`).
+  pm2 starts in the project folder (`cwd`); Node >= 20.11 (`import.meta.dirname`) (WRONG: see the CI/CD entry, it is 22.12).
 - `src/index.js` booted for real (it had only been exercised through the harness):
   both listeners answer, SIGTERM exits cleanly in 19 ms and releases the ports, and a
   bad .env is refused with every problem listed (exit 1).
@@ -133,4 +133,11 @@ Spec: ../SPEC.md. Rule: **a video is "done" only when the CAR is verified, the S
   GitHub on the first PR.
 - Audit: 3 low advisories (elliptic via dhive, no fix upstream; it's about signing,
   and we only verify). Documented in DEPLOYMENT.md.
+- First GitHub run: Node 22 green; Node 20 segfaulted in the two SQLite test files.
+  better-sqlite3 13 requires Node >= 22 (vitest 5 needs 22.12+ too). I had set
+  engines to >=20.11 without checking the dependencies' own engines. Fixed: engines
+  >=22.12, CI on 22 and 24, deploy.sh refuses an older Node, docs corrected. The
+  deploy was skipped because CI failed, as designed.
+- Ruleset not created: the org's plan doesn't allow branch rules on private repos
+  (HTTP 403).
 
