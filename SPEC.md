@@ -117,6 +117,8 @@ Each stage is saved to SQLite, so a restart picks up where it stopped (§7).
    goes over the budget partway through.
 3. **Download the CAR**, streamed to `WORK_DIR/<jobItemId>.car`. Sources are
    tried in order:
+   - `LOCAL_GATEWAY` (optional: this server's own IPFS node, so the supernode
+     instance reads from its own disk; DEPLOYMENT.md section 0)
    - `HOTNODE_GATEWAY` (`https://hotipfs-1.3speak.tv`: for videos still on the hotnode)
    - `https://ipfs.3speak.tv`
    - `https://ipfs-audio.3speak.tv`

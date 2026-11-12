@@ -17,12 +17,34 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
+  # Two instances, same code (DEPLOYMENT.md "Two instances"): one GitHub environment
+  # per server, each with its own VPS_HOST / VPS_USER / VPS_SSH_KEY (and optional
+  # VPS_PORT secret and DEPLOY_PATH variable). A server whose environment has no
+  # VPS_HOST yet is skipped with a notice, not failed, so one can go live before the other.
   deploy:
     needs: ci
     runs-on: ubuntu-latest
-    environment: production
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        target: [supernode, hotnode]
+    environment: ${{ matrix.target }}
     steps:
+      - name: Is this server set up?
+        id: target
+        env:
+          HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          if [ -n "$HOST" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=${{ matrix.target }} skipped::No VPS_HOST secret in the '${{ matrix.target }}' environment yet; nothing deployed there."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy via SSH (rolls back by itself if unhealthy)
+        if: steps.target.outputs.ready == 'true'
         uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
