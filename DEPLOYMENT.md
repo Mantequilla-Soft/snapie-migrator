@@ -1,8 +1,39 @@
 # Deployment
 
-The migrator runs under pm2 behind nginx, on the hotnode server or any VPS with
-good bandwidth to the IPFS nodes and to Buttercloud. It keeps its job history in
+The migrator runs under pm2 behind nginx. It keeps its job history in
 `data/migrator.db`, and uses `work/` for one CAR at a time (two at most).
+
+## 0. Two instances
+
+The same code runs on two servers. Only their `.env` differs.
+
+| | **Supernode** (temporary) | **Hotnode** (permanent) |
+|---|---|---|
+| Job | The backlog: copying everything already on the supernode's IPFS. People use this one. | The hotnode's own copies of new videos (service API, snapie-migrator#8) |
+| Downloads from | `LOCAL_GATEWAY`: the supernode's own IPFS, from disk | `LOCAL_GATEWAY`: the hotnode's own IPFS |
+| Writes to | **Garage directly**, on the same machine (`S3_ENDPOINT=http://127.0.0.1:3900`) | Buttercloud (`S3_ENDPOINT=https://…`), as before |
+| Internet traffic per video | none, except the small playback read-back | the video once, hotnode → Buttercloud → supernode |
+| Public page | yes, behind nginx (section 3) | no: `HOST=127.0.0.1` and no nginx site. Reach the page through an SSH tunnel if needed. |
+| `MIGRATOR_SERVICE_TOKEN` | unset | set |
+| GitHub environment | `supernode` | `hotnode` |
+
+Why it is safe for both to write the same bucket and the same Mongo:
+- the backlog skips videos younger than `BACKLOG_MIN_AGE_DAYS`, which are the hotnode's;
+- every Mongo write only applies if the document hasn't changed since it was read;
+- uploads skip objects that are already identical.
+
+If both ever copy the same video, the second one finds it done.
+
+**Buttercloud's usage counter.** The supernode writes into Garage without going
+through Buttercloud, so the bucket's `current_usage_bytes` in Buttercloud doesn't
+count those bytes. The objects themselves are fine: Buttercloud reads Garage live,
+so listing and public playback through `s3.3speak.tv` and Bunny see them at once.
+`admin-9eab69` is a house account, so nothing is billed from that counter;
+recount it once the bulk migration is over.
+
+**When the supernode's IPFS repos are retired,** stop the supernode instance
+(`pm2 delete snapie-migrator`) and remove the `supernode` environment's `VPS_HOST`
+secret. The deploy then skips it. Keep `data/migrator.db` as the record of what it copied.
 
 ## 1. One-time setup
 
@@ -50,9 +81,49 @@ The app checks `.env` at start and refuses to run, listing every problem, if
 something is wrong. That includes a bucket name or CDN host the player would
 reject.
 
-**If the migrator runs on the hotnode server itself,** `HOTNODE_GATEWAY` can be the
-local gateway (for example `http://127.0.0.1:8080`, since plain http is allowed for
-localhost). Downloads then don't go out over the internet at all.
+**`LOCAL_GATEWAY`** is this server's own IPFS gateway, tried before every other
+source. Plain http is allowed for localhost. It must answer the trustless CAR form
+(`Accept: application/vnd.ipld.car`), which Kubo's gateway does. Check it with
+`npm run check:car -- <cid>`: the output must say `from http://127.0.0.1:…`. It is
+only used to download for migrations. **Check IPFS** and **Revert** ask
+`IPFS_GATEWAYS`, which must list permanent nodes only.
+
+### Supernode `.env` (on top of the above)
+
+```bash
+PUBLIC_BASE_URL=https://<its public address>   # what the browser shows
+LOCAL_GATEWAY=http://127.0.0.1:8080            # the supernode's Kubo gateway port
+IPFS_GATEWAYS=http://127.0.0.1:8080,https://ipfs.3speak.tv,https://ipfs-audio.3speak.tv   # permanent: fine for Check IPFS here
+
+# Garage on this machine, not Buttercloud: nothing leaves the server.
+S3_ENDPOINT=http://127.0.0.1:3900              # Garage's S3 API (s3_api.api_bind_addr in garage.toml)
+S3_REGION=garage                               # must equal s3_api.s3_region in garage.toml
+S3_ACCESS_KEY_ID=                              # a Garage key for this bucket only, see below
+S3_SECRET_ACCESS_KEY=
+S3_BUCKET=admin-9eab69                         # Buttercloud uses the same name on Garage, with no prefix
+# leave MIGRATOR_SERVICE_TOKEN unset
+```
+
+A Garage key that can use this one bucket and nothing else:
+
+```bash
+garage key create snapie-migrator
+garage bucket allow --read --write admin-9eab69 --key snapie-migrator
+garage bucket info admin-9eab69                # the key is listed with RW
+```
+
+Garage's write permission also allows deletes. The migrator has no delete calls,
+but keep the key on this server only.
+
+### Hotnode `.env` (on top of the above)
+
+```bash
+HOST=127.0.0.1                                 # no public page; no nginx site
+PUBLIC_BASE_URL=http://localhost:3020          # the page through an SSH tunnel: ssh -L 3020:127.0.0.1:3020 <hotnode>
+LOCAL_GATEWAY=http://127.0.0.1:8080            # the hotnode's Kubo gateway port
+S3_ENDPOINT=https://…                          # Buttercloud, with the bucket owner's API key
+MIGRATOR_SERVICE_TOKEN=                        # openssl rand -hex 32; the same value goes in the hotnode's .env
+```
 
 ## 3. nginx
 
@@ -108,15 +179,21 @@ restarted item downloads again, but skips every upload that already went through
 
 Run these in order, and stop at the first one that fails.
 
-1. **The S3 path:** `npm run smoke:s3`. Every line must say `ok`. It uploads about
+1. **The S3 path:** `npm run smoke:s3`. Every line must say `ok`. On the
+   supernode this is the test that matters most. It proves that Garage accepts the
+   migrator's uploads and gives back the ETags the migrator predicts (these checks
+   were first proven through Buttercloud, not on Garage directly). It also proves
+   that what is written straight into Garage is served publicly through
+   Buttercloud, Bunny and s3.3speak.tv. It uploads about
    9 MB under `_smoke/<time>/` with the exact upload calls the migrator uses. Then
    it fetches the files back through the Bunny zone and s3.3speak.tv, and checks
    for the CORS header browsers need. It deletes nothing, so remove `_smoke/` by
    hand afterwards if you want.
 2. **The sources:**
    `npm run check:car -- QmUaWTmYmQ7NGi7Cq1YndpzjB1UNTmmgnhk1AxDTC8DS2g`.
-   This should say `downloaded … from https://hotipfs-1.3speak.tv`, then
-   `verified`.
+   This should say `downloaded … from` the first source that has the CID, then
+   `verified`. With `LOCAL_GATEWAY` set, that should be the local gateway for any
+   video this server holds.
 3. **Login:** open the site and log in with Keychain. The badge must say
    **Can migrate**.
 4. **Dry run:** load `coolmole`, select one video, and press **Dry run**. Read the
@@ -164,8 +241,8 @@ The pipeline lives in `.github/workflows/`:
 
 | Workflow | When | What |
 |---|---|---|
-| `ci.yml` | every pull request to `master` | lint and tests on Node 22 and 24. The player is checked out next to the migrator, so the drift test runs the migrator's `s3_url` through the player's own `s3Parts` (it fails, not skips, if the player is missing). Also shellcheck of `scripts/deploy.sh` and `npm audit` of production dependencies (high or critical fails). |
-| `deploy.yml` | every push to `master`, or by hand | runs `ci.yml` first (nothing untested deploys), then SSHes into the VPS and runs `scripts/deploy.sh <sha>`, taken from the commit being deployed. |
+| `ci.yml` | every pull request to `master` | lint and tests on Node 22 and 24, and actionlint on the workflows. The player is checked out next to the migrator, so the drift test runs the migrator's `s3_url` through the player's own `s3Parts` (it fails, not skips, if the player is missing). Also shellcheck of `scripts/deploy.sh` and `npm audit` of production dependencies (high or critical fails). |
+| `deploy.yml` | every push to `master`, or by hand | runs `ci.yml` first (nothing untested deploys), then deploys to each server in turn: `supernode`, then `hotnode` (section 0). For each one it SSHes in and runs `scripts/deploy.sh <sha>`, taken from the commit being deployed. A server whose environment has no `VPS_HOST` yet is skipped with a notice. |
 | `dependabot.yml` | weekly (npm) and monthly (actions) | opens update PRs, which go through CI like any other. |
 
 **`scripts/deploy.sh`** checks out the commit, runs `npm ci --omit=dev` and
@@ -183,13 +260,19 @@ queue on every restart and resume on boot.
       non-interactive SSH session. An nvm install is loaded automatically.
 - [ ] The deploy user must be able to `git fetch` the repo. A public repo works as
       is; for a private one, add a read-only deploy key on the server.
-- [ ] Repository secrets (Settings → Secrets → Actions), the same three as the
-      player:
-      `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (a private key whose public half is in
-      the deploy user's `authorized_keys`), and optionally `VPS_PORT`.
-- [ ] Optional repository variable `DEPLOY_PATH` (default `/var/www/snapie-migrator`).
-- [ ] The `production` environment is created on the first deploy. Add required
-      reviewers there if a person should approve each deploy.
+- [ ] Two environments (Settings → Environments): `supernode` and `hotnode`. In
+      **each**, add the environment secrets `VPS_HOST`, `VPS_USER` and `VPS_SSH_KEY`
+      (a private key whose public half is in that server's deploy user's
+      `authorized_keys`), and optionally `VPS_PORT`. Set up only `supernode` for now;
+      `hotnode` is skipped until it has a `VPS_HOST`.
+- [ ] **No repository-level `VPS_*` secrets.** An environment without its own
+      `VPS_HOST` would fall back to the repository's, and both jobs would deploy to
+      the same server.
+- [ ] Optional environment variable `DEPLOY_PATH` per environment (default
+      `/var/www/snapie-migrator`).
+- [ ] Add required reviewers to an environment if a person should approve each
+      deploy there. The old `production` environment is no longer used and can be
+      deleted.
 
 ### Rollback by hand
 

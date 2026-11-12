@@ -64,6 +64,13 @@ jobs:
       - name: Shellcheck the deploy script
         run: shellcheck scripts/deploy.sh
 
+      # The deploy workflow only runs on master, so a mistake in it would show up only
+      # after merging. actionlint catches it on the pull request instead.
+      - name: Lint the workflows
+        uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -color
+
       - run: npm ci --omit=dev
 
       # Production dependencies only; high and critical advisories fail the build.

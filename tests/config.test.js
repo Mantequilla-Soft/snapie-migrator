@@ -74,4 +74,19 @@ describe('loadConfig', () => {
       .toEqual({ dailyBytes: 0, hours: { start: 22, end: 6 }, minAgeDays: 10 });
     expect(() => loadConfig(baseEnv({ BACKLOG_HOURS: 'nights' }))).toThrow(/BACKLOG_HOURS/);
   });
+
+  it('LOCAL_GATEWAY is tried first, a gateway listed twice only once, and liveness stays on IPFS_GATEWAYS', () => {
+    const cfg = loadConfig(baseEnv({
+      LOCAL_GATEWAY: 'http://127.0.0.1:8080/', HOTNODE_GATEWAY: 'https://hotipfs-1.3speak.tv',
+      IPFS_GATEWAYS: 'https://ipfs.3speak.tv,http://127.0.0.1:8080',
+    }));
+    expect(cfg.sourceGateways).toEqual(['http://127.0.0.1:8080', 'https://hotipfs-1.3speak.tv', 'https://ipfs.3speak.tv']);
+    expect(cfg.ipfsGateways).toEqual(['https://ipfs.3speak.tv', 'http://127.0.0.1:8080']);
+    expect(loadConfig(baseEnv({ LOCAL_GATEWAY: '' })).localGateway).toBeNull();
+  });
+
+  it('LOCAL_GATEWAY must be https unless it is on this machine, and never a Bunny zone', () => {
+    expect(problemsOf(baseEnv({ LOCAL_GATEWAY: 'http://10.0.0.5:8080' }))).toEqual([expect.stringMatching(/LOCAL_GATEWAY.*must be https/)]);
+    expect(problemsOf(baseEnv({ LOCAL_GATEWAY: 'https://hotipfs-3speak-1.b-cdn.net' }))).toEqual([expect.stringMatching(/LOCAL_GATEWAY must be an IPFS node/)]);
+  });
 });

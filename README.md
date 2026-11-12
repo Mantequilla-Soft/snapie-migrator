@@ -9,13 +9,15 @@ changes an existing Mongo field. It only adds `storage_state`, `s3_url` and a fe
 `s3_*` fields. **Revert** removes exactly those.
 
 - **Design and the reasons behind it:** [SPEC.md](SPEC.md)
-- **Putting it on a VPS:** [DEPLOYMENT.md](DEPLOYMENT.md)
+- **Putting it on a VPS:** [DEPLOYMENT.md](DEPLOYMENT.md). It runs as two
+  instances of the same code: on the supernode for the bulk copy (local IPFS
+  straight into Garage) and on the hotnode for new videos.
 
 ## How a video is migrated
 
 1. **Resolve.** Read the Mongo entry again: it may have changed since it was queued.
-2. **Download** the video as a CAR file: the hotnode first, then the supernode,
-   then ipfs-audio.
+2. **Download** the video as a CAR file: this server's own IPFS first
+   (`LOCAL_GATEWAY`), then the hotnode, then the supernode, then ipfs-audio.
 3. **Verify** the CAR: the right root CID, every block's hash, and the whole
    folder readable.
 4. **Upload** the files to `<bucket>/<cid>/…` and the CAR to `<bucket>/car/<cid>.car`.

@@ -119,6 +119,14 @@ export function loadConfig(env = process.env) {
   };
 
   // --- sources / checks ---
+  // This server's own IPFS gateway, tried before anything else: on the supernode a
+  // migration then reads from local disk instead of the internet (two instances, see
+  // DEPLOYMENT.md). It must answer the trustless CAR form (Accept: application/vnd.ipld.car).
+  const localRaw = str('LOCAL_GATEWAY');
+  const localGateway = localRaw ? httpsBase('LOCAL_GATEWAY', localRaw) : null;
+  if (localGateway && /\.b-cdn\.net$/i.test(new URL(localGateway).hostname)) {
+    problems.push('LOCAL_GATEWAY must be an IPFS node, not a Bunny zone (Bunny returns an empty CAR)');
+  }
   const hotnodeRaw = str('HOTNODE_GATEWAY');
   const hotnodeGateway = hotnodeRaw ? httpsBase('HOTNODE_GATEWAY', hotnodeRaw) : null;
   if (hotnodeGateway && /\.b-cdn\.net$/i.test(new URL(hotnodeGateway).hostname)) {
@@ -156,11 +164,13 @@ export function loadConfig(env = process.env) {
     servicePort,
     mongo: Object.freeze(mongo),
     s3: Object.freeze(s3),
+    localGateway,
     hotnodeGateway,
     // The permanent IPFS nodes (no hotnode): "is this CID live?" is asked of these.
     ipfsGateways: Object.freeze(ipfsGateways),
-    // Download order: the hotnode first (videos still hot), then the supernode chain.
-    sourceGateways: Object.freeze([...(hotnodeGateway ? [hotnodeGateway] : []), ...ipfsGateways]),
+    // Download order: this server's own node, then the hotnode (videos still hot), then
+    // the supernode chain. A gateway listed twice is tried once.
+    sourceGateways: Object.freeze([...new Set([localGateway, hotnodeGateway, ...ipfsGateways].filter(Boolean))]),
     playerBaseUrl,
     hiveApiNodes: Object.freeze(hiveApiNodes),
     workDir: str('WORK_DIR', './work'),

@@ -170,3 +170,11 @@ Spec: ../SPEC.md. Rule: **a video is "done" only when the CAR is verified, the S
 - Copies checked in the harness: Mongo has `archived` + `s3_*`, `s3_migrated_by` is
   the account that added the channel, and the objects are in the fake S3.
 - Not done here: a run on the real VPS (needs the deploy first).
+
+## Two instances (2026-11-12)
+- [x] config.js: LOCAL_GATEWAY, tried first; duplicates dropped; liveness stays on IPFS_GATEWAYS (+2 tests)
+- [x] deploy.yml: matrix over the `supernode` and `hotnode` environments, one at a time; a server with no VPS_HOST is skipped with a notice
+- [x] ci.yml: actionlint on the workflows (I couldn't run it locally; the PR's CI runs it)
+- [x] DEPLOYMENT.md section 0 (the two instances), the supernode and hotnode .env, a Garage key, smoke:s3 on Garage, CI/CD environments; README, SPEC, .env.example
+- [x] Checked: `npm run check:car` with LOCAL_GATEWAY set to a local stub gateway downloads from it first and verifies (234 tests)
+- [ ] On the supernode (the user): Garage key, .env, `npm run smoke:s3` against Garage, `check:car` against the real local Kubo
