@@ -12,6 +12,8 @@ export const PLAYER_BUCKET_RE = /^[a-z0-9][a-z0-9.-]{1,62}$/;
 export const PLAYER_HOST_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
 // The player's direct S3 host is a constant, not configurable there.
 export const PLAYER_S3_DIRECT_HOST = 's3.3speak.tv';
+// The hotnode's Bunny zone, the player's first gateway (HLS_GATEWAYS[0] in its server.js).
+export const PLAYER_HOT_ZONE = 'hotipfs-3speak-1.b-cdn.net';
 
 // Hive account names: 3–16 chars, dot-separated segments, each starting with a letter.
 export const HIVE_USER_RE = /^(?=.{3,16}$)[a-z][a-z0-9-]*[a-z0-9](\.[a-z][a-z0-9-]*[a-z0-9])*$/;

@@ -333,6 +333,19 @@ ETag on every load, so a deploy shows up on the next reload.
   - Errors in red, with the message.
   - Live over SSE, and it picks up again after a page reload.
 - **Per row, once migrated:** **Check IPFS** and **Revert**.
+- **Play** (per row, when `PLAYER_BASE_URL` is set; open to everyone): the real
+  player in a frame (`/watch` for legacy, `/embed` for embed-video, `mode=iframe`).
+  The player reports every playlist and segment it loads, with the URL that
+  really served it (`3speak-source` messages, SnapieVideoPlayer #64). The panel
+  groups them by source (S3 zone, S3 direct, hotnode, IPFS gateway) and compares
+  them with `storage_state`:
+  - archived, every segment from S3: ok;
+  - archived, none from S3: warning, the S3 copy may be broken;
+  - archived, some from IPFS: a note. The player's segment router gives each S3
+    host 1.5 s or 3 s per segment, so a slow moment sends a segment to IPFS.
+  It is a visual double check; it decides nothing. Messages are accepted only
+  from the frame's own window and the player's origin, and the CSP's `frame-src`
+  allows the player's origin and nothing else.
 - **History:** past jobs and their items.
 - **Disk:** used / budget, live.
 - Built with plain HTML, CSS and JS served by Express. No build step.
@@ -363,7 +376,7 @@ S3_DIRECT_HOST=s3.3speak.tv
 
 HOTNODE_GATEWAY=https://hotipfs-1.3speak.tv   # tried first (direct, not the Bunny zone)
 IPFS_GATEWAYS=https://ipfs.3speak.tv,https://ipfs-audio.3speak.tv
-PLAYER_BASE_URL=                   # optional, enables step 8
+PLAYER_BASE_URL=                   # optional, enables step 8 and the Play preview
 HIVE_API_NODES=https://api.hive.blog,https://api.deathwing.me,https://anyx.io
 
 WORK_DIR=./work

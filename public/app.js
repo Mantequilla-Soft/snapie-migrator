@@ -1,6 +1,8 @@
 // Snapie Migrator page. Everything from the API is inserted as text (titles come
 // from users), never as HTML.
 
+import { SOURCE_MESSAGE, classify, embedUrl, summarize } from './sources.js';
+
 const $ = (sel) => document.querySelector(sel);
 const STAGES = ['resolve', 'download', 'verify', 'upload', 'check', 'mongo', 'player', 'done'];
 const LIVE_STAGES = { migrate: STAGES, check: ['resolve', 'download', 'verify', 'done'], revert: ['resolve', 'download', 'verify', 'mongo', 'done'] };
@@ -176,6 +178,7 @@ function renderVideos() {
       el('td', { class: 'c-store' }, el('span', { class: `store ${r.storage}` }, STORE_LABEL[r.storage] ?? r.storage)),
       el('td', { class: 'c-cid mono', title: r.cid ?? undefined }, r.cid ? `${r.cid.slice(0, 6)}…${r.cid.slice(-6)}` : ''),
       el('td', { class: 'c-do' },
+        state.status?.player && r.permlink && r.owner ? el('button', { class: 'btn small quiet', type: 'button', title: 'Play it in the real player and see where it plays from', onclick: () => openPreview(r) }, 'Play') : null,
         r.cid ? el('button', { class: 'btn small', type: 'button', disabled: !canAct() || busy(r), title: why ?? 'Download from the IPFS nodes and verify every block', onclick: () => single('check-ipfs', r) }, 'Check IPFS') : null,
         migrated && r.migratedAt ? el('button', { class: 'btn small danger', type: 'button', disabled: !canAct() || busy(r), title: why ?? 'Check IPFS, then play from IPFS again', onclick: () => single('revert', r) }, 'Revert') : null,
       ),
@@ -343,6 +346,78 @@ async function showItem(id) {
   $('#detail').showModal();
 }
 
+// ---------------------------------------------------------------- preview
+
+// The real player in a frame. It reports every playlist and segment it loads (see
+// public/sources.js), so this shows where the video really plays from: a migrated
+// video that fell back to IPFS plays just as well, and only this tells them apart.
+const MAX_REPORTS = 5000;
+const SILENCE_MS = 20_000;
+let preview = null;
+
+function openPreview(r) {
+  const s = state.status;
+  const src = embedUrl(s.player, r);
+  const origin = new URL(s.player).origin;
+  const frame = el('iframe', { src, title: `Player: ${r.title}`, allow: 'autoplay; fullscreen; picture-in-picture' });
+  const p = { row: r, reports: [], frame, loadedAt: null, timer: null, raf: 0 };
+  p.onMessage = (e) => {
+    if (e.source !== frame.contentWindow || e.origin !== origin) return;
+    const m = e.data;
+    if (!m || m.type !== SOURCE_MESSAGE || typeof m.url !== 'string' || !['playlist', 'segment'].includes(m.kind)) return;
+    if (p.reports.length < MAX_REPORTS) p.reports.push({ kind: m.kind, url: m.url, ok: m.ok === true, proxied: m.proxied === true, at: Date.now() });
+    if (!p.raf) p.raf = requestAnimationFrame(() => { p.raf = 0; renderPreview(); });
+  };
+  frame.addEventListener('load', () => { p.loadedAt = Date.now(); clearTimeout(p.timer); p.timer = setTimeout(renderPreview, SILENCE_MS); });
+  addEventListener('message', p.onMessage);
+  preview = p;
+  $('#preview-title').textContent = r.title;
+  $('#preview-open').href = src;
+  $('#preview-frame').replaceChildren(frame);
+  renderPreview();
+  $('#preview').showModal();
+}
+
+function closePreview() {
+  if (!preview) return;
+  removeEventListener('message', preview.onMessage);
+  clearTimeout(preview.timer);
+  cancelAnimationFrame(preview.raf);
+  $('#preview-frame').replaceChildren();   // stops playback
+  preview = null;
+}
+
+function renderPreview() {
+  const p = preview;
+  if (!p) return;
+  const hosts = state.status.sourceHosts;
+  const sum = summarize(p.reports, hosts, p.row.storage);
+  let { level, text } = sum.verdict;
+  if (!p.reports.length && p.loadedAt && Date.now() - p.loadedAt >= SILENCE_MS) {
+    level = 'info';
+    text = 'No reports from the player yet. If the video is playing, the player is an older version that does not report its sources (it needs SnapieVideoPlayer #64).';
+  }
+  const v = $('#preview-verdict');
+  v.textContent = text;
+  v.className = `verdict ${level}`;
+  const stored = STORE_LABEL[p.row.storage] ?? p.row.storage;
+  const tail = (url) => { try { const u = new URL(url); return u.pathname.split('/').slice(-2).join('/'); } catch (_) { return url; } };
+  $('#preview-body').replaceChildren(
+    el('div', {}, 'Mongo says it plays from ', el('span', { class: `store ${p.row.storage}` }, stored)),
+    sum.groups.length ? el('table', { class: 'table sources' },
+      el('thead', {}, el('tr', {}, el('th', {}, 'Source'), el('th', { class: 'num' }, 'Playlists'), el('th', { class: 'num' }, 'Segments'))),
+      el('tbody', {}, sum.groups.map((g) => el('tr', {},
+        el('td', {}, el('span', { class: `src ${g.kind}` }, g.label)),
+        el('td', { class: 'num' }, String(g.playlists)),
+        el('td', { class: 'num' }, String(g.segments)))))) : null,
+    p.reports.length ? el('details', {},
+      el('summary', {}, `Last requests (${p.reports.length})`),
+      el('ol', { class: 'events' }, p.reports.slice(-12).reverse().map((x) => el('li', { class: x.ok ? '' : 'error', title: x.url },
+        el('time', {}, new Date(x.at).toLocaleTimeString()),
+        `${x.ok ? '' : 'failed: '}${x.kind} ${tail(x.url)} from ${classify(x.url, hosts).label}${x.proxied ? ', through the player' : ''}`)))) : null,
+  );
+}
+
 // ---------------------------------------------------------------- live updates
 
 function connect() {
@@ -379,6 +454,7 @@ $('#select-all').addEventListener('change', toggleAll);
 $('#dry-run').addEventListener('click', showPlan);
 $('#migrate').addEventListener('click', showPlan);
 $('#plan').addEventListener('close', onPlanClose);
+$('#preview').addEventListener('close', closePreview);
 
 (async () => {
   try { state.me = await api('/api/me'); } catch (_) { /* logged out */ }

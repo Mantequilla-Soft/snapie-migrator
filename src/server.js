@@ -12,6 +12,7 @@
 import path from 'node:path';
 import express from 'express';
 import { COOKIE, SESSION_TTL_MS } from './auth.js';
+import { PLAYER_HOT_ZONE } from './config.js';
 import { listChannel, loadVideo } from './catalog.js';
 import { planItems } from './dryRun.js';
 import { KIND } from './actions.js';
@@ -33,6 +34,16 @@ function cookies(req) {
 
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+// The hosts the preview sorts the player's sources by (public/sources.js).
+export function sourceHosts(cfg) {
+  const host = (u) => new URL(u).hostname.toLowerCase();
+  return {
+    bucket: cfg.s3.bucket,
+    s3: [{ host: cfg.s3.cdnHost, label: `S3 (Bunny zone ${cfg.s3.cdnHost})` }, { host: cfg.s3.directHost, label: `S3 direct (${cfg.s3.directHost})` }],
+    hot: [...new Set([PLAYER_HOT_ZONE, cfg.hotnodeGateway && host(cfg.hotnodeGateway)].filter(Boolean))],
+  };
+}
 
 function errorHandler(err, _req, res, _next) {
   const status = err.status ?? (err instanceof TypeError ? 400 : 500);
@@ -61,10 +72,13 @@ export function createApp(deps) {
   app.set('trust proxy', 'loopback');
   const origin = new URL(cfg.publicBaseUrl).origin;
   const secure = cfg.publicBaseUrl.startsWith('https://');
+  // The preview frames the real player, and nothing else.
+  const frameSrc = cfg.playerBaseUrl ? `frame-src ${new URL(cfg.playerBaseUrl).origin}` : "frame-src 'none'";
+  const csp = `default-src 'self'; img-src 'self' https: data:; style-src 'self'; script-src 'self'; connect-src 'self'; ${frameSrc}; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;
 
   app.use((req, res, next) => {
     res.set({
-      'Content-Security-Policy': "default-src 'self'; img-src 'self' https: data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      'Content-Security-Policy': csp,
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
       'X-Frame-Options': 'DENY',
@@ -110,6 +124,7 @@ export function createApp(deps) {
     version: deps.version ?? null,
     bucket: cfg.s3.bucket, cdnHost: cfg.s3.cdnHost, sources: cfg.sourceGateways, maxConcurrent: cfg.maxConcurrent,
     running: queue.running.size, disk: budget.snapshot(), playerCheck: !!cfg.playerBaseUrl,
+    player: cfg.playerBaseUrl, sourceHosts: sourceHosts(cfg),
   }));
   app.get('/api/channel/:user', wrap(async (req, res) => {
     let rows;

@@ -29,6 +29,13 @@ changes an existing Mongo field. It only adds `storage_state`, `s3_url` and a fe
 The local CAR is deleted whatever happens. The CAR kept in S3 can bring the video
 back on IPFS under the same CID with `ipfs dag import`.
 
+## Seeing where a video plays from
+
+With `PLAYER_BASE_URL` set, every row has a **Play** button. It opens the real
+player and lists where each playlist and segment really came from: the S3 zone,
+S3 direct, the hotnode, or an IPFS gateway. A migrated video that has quietly
+fallen back to IPFS plays just as well, and this is how you tell.
+
 ## Who can do what
 
 Anyone can open the page and look at channels and jobs. To act, log in with Hive
@@ -66,6 +73,6 @@ src/
   dryRun.js         the plan shown before every migration
   auth.js           Keychain login and sessions
   server.js         the public app and the loopback service app
-public/             the page (plain HTML, CSS and JS, no build step)
+public/             the page (plain HTML, CSS and JS, no build step); sources.js sorts the player's source reports
 scripts/            smoke:s3, check:car
 ```
