@@ -18,10 +18,10 @@ jobs:
         # better-sqlite3 13 and vitest 5 need Node 22.12+ (Node 20 is end of life).
         node: [22, 24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The player, so the drift test runs our s3_url through its own s3Parts.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: Mantequilla-Soft/snapievideoplayer
           ref: master
@@ -54,7 +54,7 @@ jobs:
     name: Scripts and dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
