@@ -21,6 +21,8 @@ import { STAGES } from './pipeline.js';
 export const MAX_ATTEMPTS = 3;
 export const BACKOFF_MS = Object.freeze([30_000, 120_000, 600_000]);
 export const ACTIVE = Object.freeze(['queued', 'running']);
+// Manual and service work first; the backlog (backlog.js) only fills idle time.
+export const PRIORITY = Object.freeze({ NORMAL: 0, BACKLOG: 10 });
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS jobs (
@@ -46,6 +48,7 @@ CREATE TABLE IF NOT EXISTS items (
   status TEXT NOT NULL,            -- queued | running | done | failed | cancelled
   stage TEXT,
   attempts INTEGER NOT NULL DEFAULT 0,
+  priority INTEGER NOT NULL DEFAULT 0,   -- lower runs first; the backlog uses PRIORITY.BACKLOG
   not_before INTEGER NOT NULL DEFAULT 0,
   progress TEXT,
   error TEXT,
@@ -86,6 +89,11 @@ export class Queue extends EventEmitter {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.exec(SCHEMA);
+    // Databases created before the backlog have no priority column.
+    if (!this.db.prepare('PRAGMA table_info(items)').all().some((c) => c.name === 'priority')) {
+      this.db.exec(`ALTER TABLE items ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`);
+    }
+    this.db.exec('CREATE INDEX IF NOT EXISTS items_next ON items(status, priority, id)');
     this.workDir = workDir;
     this.maxConcurrent = maxConcurrent;
     this.deps = deps;
@@ -145,17 +153,19 @@ export class Queue extends EventEmitter {
   /**
    * Add a job. Items already queued or running are left out (reported in `skipped`).
    * items: [{ collection, docId, owner, permlink, title, cid }]
+   * `jobId` appends to an existing job instead (the backlog keeps one job per channel).
    */
-  enqueue({ by, channel = null, mode = 'archived', kind = 'migrate', items }) {
+  enqueue({ by, channel = null, mode = 'archived', kind = 'migrate', items, priority = PRIORITY.NORMAL, jobId: into = null }) {
     if (!by) throw new Error('by is required');
     if (!['migrate', 'check', 'revert'].includes(kind)) throw new Error(`unknown kind ${kind}`);
     if (!Array.isArray(items) || !items.length) throw new Error('no items');
     const active = this.db.prepare(`SELECT id FROM items WHERE collection = ? AND doc_id = ? AND status IN ('queued', 'running')`);
-    const insert = this.db.prepare(`INSERT INTO items (job_id, collection, doc_id, owner, permlink, title, cid, mode, kind, by, status, created_at, updated_at)
-      VALUES (@job_id, @collection, @doc_id, @owner, @permlink, @title, @cid, @mode, @kind, @by, 'queued', @at, @at)`);
+    const insert = this.db.prepare(`INSERT INTO items (job_id, collection, doc_id, owner, permlink, title, cid, mode, kind, by, priority, status, created_at, updated_at)
+      VALUES (@job_id, @collection, @doc_id, @owner, @permlink, @title, @cid, @mode, @kind, @by, @priority, 'queued', @at, @at)`);
     const result = this.db.transaction(() => {
       const at = this.iso();
-      const jobId = Number(this.db.prepare('INSERT INTO jobs (created_at, created_by, channel, mode, kind) VALUES (?, ?, ?, ?, ?)').run(at, by, channel, mode, kind).lastInsertRowid);
+      if (into !== null && !this.db.prepare('SELECT 1 FROM jobs WHERE id = ?').get(into)) throw new Error(`no job ${into}`);
+      const jobId = into ?? Number(this.db.prepare('INSERT INTO jobs (created_at, created_by, channel, mode, kind) VALUES (?, ?, ?, ?, ?)').run(at, by, channel, mode, kind).lastInsertRowid);
       const added = [];
       const skipped = [];
       for (const it of items) {
@@ -164,7 +174,7 @@ export class Queue extends EventEmitter {
         if (dup) { skipped.push({ ...it, reason: `already in the queue (item ${dup.id})` }); continue; }
         const id = Number(insert.run({
           job_id: jobId, collection: it.collection, doc_id: docId, owner: it.owner ?? null, permlink: it.permlink ?? null,
-          title: it.title ?? null, cid: it.cid ?? null, mode, kind, by, at,
+          title: it.title ?? null, cid: it.cid ?? null, mode, kind, by, priority, at,
         }).lastInsertRowid);
         added.push(id);
       }
@@ -180,7 +190,7 @@ export class Queue extends EventEmitter {
     while (this.running.size < this.maxConcurrent) {
       const busy = [...this.running.values()].map((r) => r.cid).filter(Boolean);
       const next = this.db.prepare(`SELECT * FROM items WHERE status = 'queued' AND not_before <= ?
-        ${busy.length ? `AND (cid IS NULL OR cid NOT IN (${busy.map(() => '?').join(',')}))` : ''} ORDER BY id LIMIT 1`)
+        ${busy.length ? `AND (cid IS NULL OR cid NOT IN (${busy.map(() => '?').join(',')}))` : ''} ORDER BY priority, id LIMIT 1`)
         .get(this.now(), ...busy);
       if (!next) return;
       this.startItem(next);

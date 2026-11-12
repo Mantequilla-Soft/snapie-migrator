@@ -148,6 +148,15 @@ Run these in order, and stop at the first one that fails.
 - **History:** `data/migrator.db` (SQLite). Back it up with the server; it is the
   record of who migrated what, and when.
 - **Nothing to clean up:** `work/` is emptied after every item and at every start.
+- **The backlog** (many channels, unattended):
+  - Its pace is set in `.env`: `BACKLOG_DAILY_GB`, `BACKLOG_HOURS`, `BACKLOG_MIN_AGE_DAYS`. Restart after changing them.
+  - It survives restarts.
+  - If it shows **Paused** with "N videos failed in a row", something upstream is
+    probably down (a gateway, Buttercloud). Check one failed item's events, fix the
+    cause, then press **Resume**.
+  - Before a large run, add the channels while the backlog is paused. Each channel's
+    expected size shows once it is listed, which tells you whether the bucket has
+    room.
 
 ## 7. CI/CD
 

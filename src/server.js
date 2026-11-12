@@ -66,7 +66,7 @@ async function startMigration(deps, { items, mode, by, channel }) {
 }
 
 export function createApp(deps) {
-  const { cfg, db, queue, auth, budget } = deps;
+  const { cfg, db, queue, auth, budget, backlog } = deps;
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
@@ -163,11 +163,36 @@ export function createApp(deps) {
       send('progress', p);
       send('disk', budget.snapshot());
     };
+    // Backlog changes come in bursts: tell the page once per second at most; it re-reads /api/backlog.
+    let pending = null;
+    const onBacklog = () => { pending ??= setTimeout(() => { pending = null; send('backlog', {}); }, 1000); };
     queue.on('item', onItem);
     queue.on('progress', onProgress);
+    backlog?.on('change', onBacklog);
     const beat = setInterval(() => { res.write(': keep-alive\n\n'); send('disk', budget.snapshot()); }, 15_000);
     send('hello', { running: queue.running.size, disk: budget.snapshot() });
-    req.on('close', () => { clearInterval(beat); queue.off('item', onItem); queue.off('progress', onProgress); });
+    req.on('close', () => { clearInterval(beat); queue.off('item', onItem); queue.off('progress', onProgress); backlog?.off('change', onBacklog); clearTimeout(pending); });
+  });
+
+  // --- backlog (issue #9) ---
+  app.get('/api/backlog', (_req, res) => res.json(backlog.state()));
+  app.get('/api/backlog/channels/:id', (req, res, next) => {
+    const c = backlog.channel(Number(req.params.id));
+    return c ? res.json(c) : next(httpError(404, 'no such backlog channel'));
+  });
+  app.post('/api/backlog/channels', mutating, authorized, (req, res) => {
+    try { res.status(201).json(backlog.add(req.body?.channels, req.session.user)); } catch (e) { throw httpError(400, e.message); }
+  });
+  app.post('/api/backlog/pause', mutating, authorized, (req, res) => { backlog.pause(`paused by @${req.session.user}`, req.session.user); res.json(backlog.state()); });
+  app.post('/api/backlog/resume', mutating, authorized, (_req, res) => { backlog.resume(); res.json(backlog.state()); });
+  app.post('/api/backlog/channels/:id/remove', mutating, authorized, (req, res, next) => {
+    const c = backlog.remove(Number(req.params.id));
+    return c ? res.json(c) : next(httpError(404, 'no such backlog channel'));
+  });
+  app.post('/api/backlog/channels/:id/retry', mutating, authorized, (req, res, next) => {
+    let r;
+    try { r = backlog.retry(Number(req.params.id)); } catch (e) { return next(httpError(409, e.message)); }
+    return r ? res.json(r) : next(httpError(404, 'no such backlog channel'));
   });
 
   // --- actions (allowed accounts only) ---

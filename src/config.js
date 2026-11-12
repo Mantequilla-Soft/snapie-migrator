@@ -20,6 +20,17 @@ export const HIVE_USER_RE = /^(?=.{3,16}$)[a-z][a-z0-9-]*[a-z0-9](\.[a-z][a-z0-9
 
 export const MAX_CONCURRENT_LIMIT = 2;
 
+/** `"01-09"` (UTC, end exclusive, may wrap past midnight) → { start, end }, or null for any time. */
+export function parseHours(text) {
+  const s = String(text ?? '').trim();
+  if (!s) return null;
+  const m = s.match(/^(\d{1,2})-(\d{1,2})$/);
+  if (!m) throw new TypeError(`"${s}" is not HH-HH`);
+  const [start, end] = [Number(m[1]), Number(m[2])];
+  if (start > 23 || end > 24 || start === end % 24) throw new TypeError(`"${s}" is not a window of UTC hours`);
+  return { start, end: end % 24 };
+}
+
 export class ConfigError extends Error {
   constructor(problems) {
     super(`Invalid configuration:\n  - ${problems.join('\n  - ')}`);
@@ -126,6 +137,12 @@ export function loadConfig(env = process.env) {
   const diskBudgetGb = num('DISK_BUDGET_GB', 20, { min: 1 });
   const diskReserveGb = num('DISK_RESERVE_GB', 5, { min: 0 });
 
+  // --- backlog (issue #9) ---
+  const backlogDailyGb = num('BACKLOG_DAILY_GB', 50, { min: 0 });   // decimal GB (1e9), as the page shows it
+  const backlogMinAgeDays = num('BACKLOG_MIN_AGE_DAYS', 7, { min: 0, max: 3650 });
+  let backlogHours = null;
+  try { backlogHours = parseHours(str('BACKLOG_HOURS')); } catch (e) { problems.push(`BACKLOG_HOURS: ${e.message} (e.g. 01-09, in UTC)`); }
+
   // Every num()/required() call must sit above this line, or its problem is lost.
   if (problems.length) throw new ConfigError(problems);
 
@@ -152,5 +169,6 @@ export function loadConfig(env = process.env) {
     diskReserveBytes: diskReserveGb * GB,
     maxConcurrent,
     downloadRateBytesPerSec: rateMbps ? Math.floor((rateMbps * 1e6) / 8) : 0,
+    backlog: Object.freeze({ dailyBytes: backlogDailyGb * 1e9, hours: backlogHours, minAgeDays: backlogMinAgeDays }),
   });
 }

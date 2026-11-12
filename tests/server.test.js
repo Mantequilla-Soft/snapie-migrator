@@ -6,6 +6,9 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createAuth } from '../src/auth.js';
+import { Backlog } from '../src/backlog.js';
+import { listChannel } from '../src/catalog.js';
+import { planItems } from '../src/dryRun.js';
 import { loadConfig } from '../src/config.js';
 import { DiskBudget } from '../src/disk.js';
 import { Queue } from '../src/queue.js';
@@ -15,7 +18,7 @@ import { startFakeS3 } from './helpers/fakeS3.js';
 import { CID, CID2 } from './helpers/env.js';
 import { fakeHive, signWith } from './helpers/hive.js';
 
-let mongod, client, db, fake, dir, cfg, queue, app, serviceApp, auth, runs;
+let mongod, client, db, fake, dir, cfg, queue, app, serviceApp, auth, runs, backlog;
 const TOKEN = 's'.repeat(40);
 
 beforeAll(async () => {
@@ -37,12 +40,18 @@ beforeAll(async () => {
   queue = new Queue({ dbPath: path.join(dir, 'm.db'), workDir: cfg.workDir, maxConcurrent: 1, deps: {}, run });
   queue.start();
   auth = createAuth(cfg, { fetchImpl: fakeHive({ meno: { seeds: ['meno'] }, stranger: { seeds: ['stranger'] } }).fetchImpl });
-  const deps = { cfg, db, bucket, budget, queue, auth };
+  backlog = new Backlog({
+    queue, list: (ch) => listChannel(db, cfg, ch), plan: async (ref) => (await planItems({ cfg, db, bucket }, [ref]))[0],
+    tickMs: 1e9, log: { error() {}, warn() {} },
+  });
+  backlog.start();
+  const deps = { cfg, db, bucket, budget, queue, auth, backlog };
   app = createApp(deps);
   serviceApp = createServiceApp(deps);
 });
 
 afterAll(async () => {
+  await backlog.stop();
   queue.stopped = true;
   clearInterval(queue.timer);
   queue.db.close();
@@ -56,7 +65,7 @@ let ids;
 beforeEach(async () => {
   await db.collection('videos').deleteMany({});
   await db.collection('embed-video').deleteMany({});
-  queue.db.exec('DELETE FROM events; DELETE FROM items; DELETE FROM jobs;');
+  queue.db.exec('DELETE FROM backlog_videos; DELETE FROM backlog_channels; DELETE FROM settings; DELETE FROM events; DELETE FROM items; DELETE FROM jobs;');
   queue.running.clear();
   runs.length = 0;
   const r = await db.collection('videos').insertMany([
@@ -234,3 +243,62 @@ describe.skipIf(!lanIp)('service listener from a non-loopback address', () => {
   });
 });
 
+
+describe('backlog', () => {
+  const settled = async () => { for (let i = 0; i < 10; i++) { await new Promise((r) => setTimeout(r, 10)); await backlog.feeding; } };
+
+  it('reads are open, writes need an allowed account', async () => {
+    const r = await request(app).get('/api/backlog');
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ state: 'idle', channels: [], pacing: { minAgeDays: 7 } });
+    const anon = await request(app).post('/api/backlog/channels').send({ channels: ['coolmole'] });
+    expect(anon.status).toBe(401);
+    const stranger = await cookieFor('stranger');
+    for (const p of ['/api/backlog/channels', '/api/backlog/pause', '/api/backlog/resume', '/api/backlog/channels/1/remove', '/api/backlog/channels/1/retry']) {
+      const x = await request(app).post(p).set('Cookie', stranger).send({ channels: ['coolmole'] });
+      expect(x.status, p).toBe(403);
+    }
+  });
+
+  it('lists the channel from Mongo and queues the eligible video at backlog priority', async () => {
+    const cookie = await cookieFor('meno');
+    const add = await request(app).post('/api/backlog/channels').set('Cookie', cookie).send({ channels: ['@CoolMole', 'no'] });
+    expect(add.status).toBe(201);
+    expect(add.body).toEqual({ added: ['coolmole'], skipped: [{ channel: 'no', reason: 'not a Hive account name' }] });
+    await settled();
+
+    const { body } = await request(app).get('/api/backlog');
+    expect(body.state).toBe('running');
+    expect(body.channels[0]).toMatchObject({ channel: 'coolmole', addedBy: 'meno', status: 'migrating', queued: 1, present: 1, skipped: 1 });
+    const detail = await request(app).get(`/api/backlog/channels/${body.channels[0].id}`);
+    const byPermlink = Object.fromEntries(detail.body.videos.map((v) => [v.permlink, v]));
+    expect(byPermlink.ok).toMatchObject({ status: 'queued', cid: CID });
+    expect(byPermlink.gone).toMatchObject({ status: 'skipped', reason: 'status "deleted" is not ready' });
+    expect(byPermlink.moved.status).toBe('present');
+    expect(runs.map((x) => x.docId)).toEqual([ids[0]]);
+    expect(queue.item(byPermlink.ok.itemId)).toMatchObject({ by: 'meno', mode: 'archived', priority: 10 });
+
+    expect((await request(app).get('/api/backlog/channels/999')).status).toBe(404);
+  });
+
+  it('pause and resume, remove, and a bad body', async () => {
+    const cookie = await cookieFor('meno');
+    const paused = await request(app).post('/api/backlog/pause').set('Cookie', cookie).send({});
+    expect(paused.body).toMatchObject({ state: 'paused', hold: { reason: 'paused by @meno', by: 'meno' } });
+    await request(app).post('/api/backlog/channels').set('Cookie', cookie).send({ channels: 'coolmole' });
+    await settled();
+    expect(runs).toEqual([]);   // paused: not even listed
+    const { body } = await request(app).get('/api/backlog');
+    expect(body.channels[0].status).toBe('pending');
+
+    const removed = await request(app).post(`/api/backlog/channels/${body.channels[0].id}/remove`).set('Cookie', cookie).send({});
+    expect(removed.body.status).toBe('removed');
+    const retry = await request(app).post(`/api/backlog/channels/${body.channels[0].id}/retry`).set('Cookie', cookie).send({});
+    expect(retry.status).toBe(409);
+    expect((await request(app).post('/api/backlog/channels/999/remove').set('Cookie', cookie).send({})).status).toBe(404);
+    expect((await request(app).post('/api/backlog/channels').set('Cookie', cookie).send({})).status).toBe(400);
+
+    const resumed = await request(app).post('/api/backlog/resume').set('Cookie', cookie).send({});
+    expect(resumed.body.hold).toBeNull();
+  });
+});

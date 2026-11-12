@@ -67,4 +67,11 @@ describe('loadConfig', () => {
   it('turns the rate limit into bytes per second', () => {
     expect(loadConfig(baseEnv({ DOWNLOAD_RATE_LIMIT_MBPS: '80' })).downloadRateBytesPerSec).toBe(10_000_000);
   });
+
+  it('backlog pacing: defaults, values and a bad hours window', () => {
+    expect(loadConfig(baseEnv()).backlog).toEqual({ dailyBytes: 50e9, hours: null, minAgeDays: 7 });
+    expect(loadConfig(baseEnv({ BACKLOG_DAILY_GB: '0', BACKLOG_HOURS: '22-06', BACKLOG_MIN_AGE_DAYS: '10' })).backlog)
+      .toEqual({ dailyBytes: 0, hours: { start: 22, end: 6 }, minAgeDays: 10 });
+    expect(() => loadConfig(baseEnv({ BACKLOG_HOURS: 'nights' }))).toThrow(/BACKLOG_HOURS/);
+  });
 });
