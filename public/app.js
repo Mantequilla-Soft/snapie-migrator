@@ -355,43 +355,64 @@ const MAX_REPORTS = 5000;
 const SILENCE_MS = 20_000;
 let preview = null;
 
+// Strict (the default): the player plays only from the source Mongo assigns, with
+// no fallback, so a broken copy fails here instead of hiding behind IPFS. "Like a
+// viewer" is normal playback, fallbacks and all.
 function openPreview(r) {
+  preview = { row: r, strict: true };
+  $('#preview-title').textContent = r.title;
+  for (const input of document.querySelectorAll('input[name="preview-mode"]')) input.checked = input.value === 'strict';
+  loadPreviewFrame();
+  $('#preview').showModal();
+}
+
+function loadPreviewFrame() {
+  const p = preview;
+  stopPreviewFrame(p);
   const s = state.status;
-  const src = embedUrl(s.player, r);
+  const src = embedUrl(s.player, p.row, { strict: p.strict });
   const origin = new URL(s.player).origin;
-  const frame = el('iframe', { src, title: `Player: ${r.title}`, allow: 'autoplay; fullscreen; picture-in-picture' });
-  const p = { row: r, reports: [], frame, loadedAt: null, timer: null, raf: 0 };
+  const frame = el('iframe', { src, title: `Player: ${p.row.title}`, allow: 'autoplay; fullscreen; picture-in-picture' });
+  Object.assign(p, { reports: [], frame, loadedAt: null, timer: null, raf: 0 });
   p.onMessage = (e) => {
     if (e.source !== frame.contentWindow || e.origin !== origin) return;
     const m = e.data;
     if (!m || m.type !== SOURCE_MESSAGE || typeof m.url !== 'string' || !['playlist', 'segment'].includes(m.kind)) return;
-    if (p.reports.length < MAX_REPORTS) p.reports.push({ kind: m.kind, url: m.url, ok: m.ok === true, proxied: m.proxied === true, at: Date.now() });
+    if (p.reports.length < MAX_REPORTS) p.reports.push({ kind: m.kind, url: m.url, ok: m.ok === true, proxied: m.proxied === true, strict: m.strict === true, at: Date.now() });
     if (!p.raf) p.raf = requestAnimationFrame(() => { p.raf = 0; renderPreview(); });
   };
   frame.addEventListener('load', () => { p.loadedAt = Date.now(); clearTimeout(p.timer); p.timer = setTimeout(renderPreview, SILENCE_MS); });
   addEventListener('message', p.onMessage);
-  preview = p;
-  $('#preview-title').textContent = r.title;
   $('#preview-open').href = src;
   $('#preview-frame').replaceChildren(frame);
   renderPreview();
-  $('#preview').showModal();
+}
+
+function stopPreviewFrame(p) {
+  if (!p?.onMessage) return;
+  removeEventListener('message', p.onMessage);
+  clearTimeout(p.timer);
+  cancelAnimationFrame(p.raf);
+  p.onMessage = null;
+  $('#preview-frame').replaceChildren();   // stops playback
 }
 
 function closePreview() {
-  if (!preview) return;
-  removeEventListener('message', preview.onMessage);
-  clearTimeout(preview.timer);
-  cancelAnimationFrame(preview.raf);
-  $('#preview-frame').replaceChildren();   // stops playback
+  stopPreviewFrame(preview);
   preview = null;
+}
+
+function setPreviewMode(e) {
+  if (!preview || e.target.name !== 'preview-mode') return;
+  preview.strict = e.target.value === 'strict';
+  loadPreviewFrame();
 }
 
 function renderPreview() {
   const p = preview;
   if (!p) return;
   const hosts = state.status.sourceHosts;
-  const sum = summarize(p.reports, hosts, p.row.storage);
+  const sum = summarize(p.reports, hosts, p.row.storage, { strict: p.strict });
   let { level, text } = sum.verdict;
   if (!p.reports.length && p.loadedAt && Date.now() - p.loadedAt >= SILENCE_MS) {
     level = 'info';
@@ -455,6 +476,7 @@ $('#dry-run').addEventListener('click', showPlan);
 $('#migrate').addEventListener('click', showPlan);
 $('#plan').addEventListener('close', onPlanClose);
 $('#preview').addEventListener('close', closePreview);
+$('#preview-mode').addEventListener('change', setPreviewMode);
 
 (async () => {
   try { state.me = await api('/api/me'); } catch (_) { /* logged out */ }

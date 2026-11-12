@@ -123,9 +123,10 @@ Run these in order, and stop at the first one that fails.
    `$set` it shows.
 5. **One video:** migrate it. When it's done, press **Play** on its row. The
    real player opens in a panel that lists where every playlist and segment
-   came from. Expect "Every segment so far came from S3". One or two segments
-   from an IPFS gateway mean S3 was slow for them at that moment; none from S3
-   at all is a problem. (This needs `PLAYER_BASE_URL` and a player with source
+   came from. It starts in **Assigned source only** (strict) mode, with no
+   fallback. Expect "Strict: every segment came from the S3 copy". **Like a
+   viewer** shows normal playback: there, one or two segments from an IPFS
+   gateway mean S3 was slow for them at that moment. (This needs `PLAYER_BASE_URL` and a player with source
    reporting, SnapieVideoPlayer #64. Without it, use DevTools' Network tab: the
    segments come from `buttercloud.b-cdn.net` or `s3.3speak.tv`, through the
    player's `/seg`.)

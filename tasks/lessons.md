@@ -7,6 +7,11 @@
 - Rule: in browser checks, change the path or query (`?run=N`) to force a load, and
   confirm the reload (fresh element state, new request in the server log) before
   diagnosing anything server-side.
+- It happened again (strict-mode check): `browser_navigate` to `/#coolmole` while
+  already on `/#coolmole` kept the old page, so the new toggle was missing and the
+  frame had no `strict=1`. Rule, made concrete: after changing anything under
+  `public/`, the first browser step is `location.reload()` or a new `?run=N`, then
+  check that one new element exists before testing behaviour.
 
 ## Run the real thing, not only the unit tests
 - 184 tests passed, but the first browser run still found a login bug (a challenge

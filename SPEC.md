@@ -343,6 +343,13 @@ ETag on every load, so a deploy shows up on the next reload.
   - archived, none from S3: warning, the S3 copy may be broken;
   - archived, some from IPFS: a note. The player's segment router gives each S3
     host 1.5 s or 3 s per segment, so a slow moment sends a segment to IPFS.
+  **Strict by default** (`strict=1`, SnapieVideoPlayer #66 and later): the player
+  plays only from the source Mongo assigns (the S3 zone for an archived video,
+  the hotnode for a hot one), with no fallback and no sponsor break. Then every
+  segment must come from that source, and any failure is shown as a failure.
+  **Like a viewer** switches back to normal playback with every fallback. Strict
+  doesn't apply to a video without an S3 copy, and an older player that ignores
+  it is reported as such (each report carries the player's `strict`).
   It is a visual double check; it decides nothing. Messages are accepted only
   from the frame's own window and the player's origin, and the CSP's `frame-src`
   allows the player's origin and nothing else.
