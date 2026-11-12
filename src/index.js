@@ -9,8 +9,11 @@ import path from 'node:path';
 import { MongoClient } from 'mongodb';
 import { runAny } from './actions.js';
 import { createAuth } from './auth.js';
+import { Backlog } from './backlog.js';
+import { listChannel } from './catalog.js';
 import { ConfigError, loadConfig } from './config.js';
 import { DiskBudget } from './disk.js';
+import { planItems } from './dryRun.js';
 import { Queue } from './queue.js';
 import { createBucket } from './s3.js';
 import { createApp, createServiceApp } from './server.js';
@@ -41,9 +44,19 @@ const auth = createAuth(cfg);
 const version = (() => {
   try { return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: path.resolve(import.meta.dirname, '..') }).toString().trim(); } catch (_) { return null; }
 })();
-const deps = { ...pipelineDeps, queue, auth, version };
+const backlog = new Backlog({
+  queue,
+  list: (channel) => listChannel(db, cfg, channel),
+  plan: async (ref) => (await planItems(pipelineDeps, [ref], { mode: 'archived' }))[0],
+  maxActive: cfg.maxConcurrent,
+  ...cfg.backlog,
+  diskBudgetBytes: cfg.diskBudgetBytes,
+});
+const deps = { ...pipelineDeps, queue, auth, version, backlog };
 
 const { requeued } = queue.start();
+const { caught } = backlog.start();
+if (caught) console.log(`[migrator] backlog caught up on ${caught} item(s)`);
 const server = createApp(deps).listen(cfg.port, cfg.host, () => {
   console.log(`[migrator] ${version?.slice(0, 7) ?? 'unknown version'} ${cfg.publicBaseUrl} on ${cfg.host}:${cfg.port}, bucket ${cfg.s3.bucket}, ${cfg.maxConcurrent} at a time, allowed: ${cfg.allowedUsers.join(', ')}`);
   if (requeued) console.log(`[migrator] ${requeued} interrupted item(s) queued again`);
@@ -60,6 +73,7 @@ async function shutdown(signal) {
   server.close();
   service?.close();
   server.closeAllConnections?.();
+  await backlog.stop();
   await queue.stop();
   await mongo.close();
   process.exit(0);

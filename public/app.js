@@ -9,7 +9,7 @@ const LIVE_STAGES = { migrate: STAGES, check: ['resolve', 'download', 'verify', 
 const KIND_LABEL = { migrate: 'Migrate', check: 'Check IPFS', revert: 'Revert' };
 const STORE_LABEL = { ipfs: 'IPFS', hot: 'Hotnode + S3', archived: 'S3', other: 'Unknown' };
 
-const state = { me: { user: null, authorized: false }, status: null, channel: null, rows: [], picked: new Set(), jobs: new Map(), progress: new Map() };
+const state = { me: { user: null, authorized: false }, status: null, channel: null, rows: [], picked: new Set(), jobs: new Map(), progress: new Map(), backlog: null };
 
 function el(tag, attrs = {}, ...children) {
   const n = document.createElement(tag);
@@ -60,6 +60,7 @@ function renderSession() {
     b.className = `badge ${authorized ? 'ok' : 'view'}`;
   }
   renderVideos();
+  renderBacklog();
 }
 
 async function login(e) {
@@ -247,11 +248,12 @@ async function onPlanClose() {
   } catch (err) { notice(`Could not start: ${err.message}`, 'error'); }
 }
 
-function ask(title, text, yes) {
+function ask(title, text, yes, no = 'Keep it in S3') {
   return new Promise((resolve) => {
     $('#ask-title').textContent = title;
     $('#ask-text').textContent = text;
     $('#ask-yes').textContent = yes;
+    $('#ask-no').textContent = no;
     const d = $('#ask');
     d.addEventListener('close', () => resolve(d.returnValue === 'yes'), { once: true });
     d.returnValue = '';
@@ -335,15 +337,15 @@ async function showItem(id) {
   const it = await api(`/api/items/${id}`);
   $('#detail-title').textContent = it.title ?? it.permlink ?? `Item ${id}`;
   const r = it.result;
-  $('#detail-body').replaceChildren(
+  $('#detail-body').replaceChildren(...[
     el('div', {}, `${KIND_LABEL[it.kind]}: ${it.status}, attempt ${it.attempts}`),
     it.cid ? el('div', {}, 'CID ', el('span', { class: 'mono' }, it.cid)) : null,
     r?.bytes ? el('div', {}, `${r.files} files, ${mb(r.bytes)}, CAR ${mb(r.carBytes)} from ${r.gateway}; ${r.uploaded} uploaded, ${r.skipped} already there`) : null,
     r?.player ? el('div', {}, `Player check: ${r.player.ok ? 'passed' : 'FAILED'}, ${r.player.detail}`) : null,
     it.error ? el('div', { class: 'item-err' }, it.error) : null,
     el('ol', { class: 'events' }, it.events.map((e) => el('li', { class: e.level }, el('time', {}, new Date(e.at).toLocaleTimeString()), e.message))),
-  );
-  $('#detail').showModal();
+  ].filter(Boolean));
+  if (!$('#detail').open) $('#detail').showModal();
 }
 
 // ---------------------------------------------------------------- preview
@@ -439,6 +441,133 @@ function renderPreview() {
   );
 }
 
+// ---------------------------------------------------------------- backlog
+
+// A list of channels the server works through on its own (issue #9). The page only
+// shows it and sends the few commands; pacing and retries happen on the server.
+const BACKLOG_STATE = { running: 'Running', idle: 'Idle', paused: 'Paused', waiting: 'Waiting' };
+const BACKLOG_BADGE = { running: 'ok', idle: '', paused: 'view', waiting: 'view' };
+const CHANNEL_STATE = { pending: 'Not listed yet', migrating: 'Migrating', done: 'Done', removed: 'Removed' };
+const VIDEO_STATE = { pending: 'To copy', queued: 'In the queue', done: 'Copied', present: 'Already in S3', skipped: 'Skipped', failed: 'Failed' };
+const when = (iso) => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+
+async function refreshBacklog() {
+  state.backlog = await api('/api/backlog');
+  renderBacklog();
+}
+
+function backlogSummary(b) {
+  const p = b.pacing;
+  const cap = p.dailyBytes ? `${mb(b.last24h.bytes)} of ${mb(p.dailyBytes)} copied in the last 24 h` : `${mb(b.last24h.bytes)} copied in the last 24 h (no daily cap)`;
+  const hours = p.hours ? ` New videos start between ${p.hours.start}:00 and ${p.hours.end}:00 UTC.` : '';
+  const young = ` Videos younger than ${p.minAgeDays} days are left to the hotnode.`;
+  const hold = b.hold
+    ? b.hold.state === 'paused'
+      ? `${b.hold.by ? `Paused by @${b.hold.by}` : `Paused: ${b.hold.reason}`}${b.hold.since ? `, ${when(b.hold.since)}` : ''}. `
+      : `Waiting: ${b.hold.reason}. Continues ${when(b.hold.until)}. `
+    : '';
+  return `${hold}${cap}.${hours}${young}`;
+}
+
+// "Done" only when nothing failed: a channel that finished with failures needs a person.
+const channelState = (c) => (c.status === 'done' && c.failed ? `Done, ${c.failed} failed` : CHANNEL_STATE[c.status] ?? c.status);
+
+function channelProgress(c) {
+  if (c.status === 'pending') return el('span', { class: 'v-meta' }, c.error ? '' : 'Listed when its turn comes');
+  const total = c.pending + c.queued + c.done + c.present + c.skipped + c.failed;
+  if (c.status === 'removed' && !c.listedAt) return el('span', { class: 'v-meta' }, 'Removed before it was listed');
+  const settled = total - c.pending - c.queued;
+  const parts = [
+    c.done && `${c.done} copied`, c.present && `${c.present} already in S3`, c.skipped && `${c.skipped} skipped`,
+    c.failed && `${c.failed} failed`, (c.pending + c.queued) && `${c.pending + c.queued} to go`,
+  ].filter(Boolean);
+  return el('div', {},
+    el('div', { class: 'meter' }, el('i', { style: `width:${total ? (settled / total) * 100 : 100}%` })),
+    el('div', { class: 'v-meta' }, parts.length ? parts.join(', ') : 'No videos'));
+}
+
+function renderBacklog() {
+  const b = state.backlog;
+  if (!b) return;
+  const badge = $('#backlog-state');
+  badge.textContent = BACKLOG_STATE[b.state] ?? b.state;
+  badge.className = `badge ${BACKLOG_BADGE[b.state] ?? ''}`;
+  $('#backlog-summary').textContent = backlogSummary(b);
+  $('#backlog-form').hidden = !canAct();
+  $('#backlog-pause').hidden = !canAct() || b.state === 'paused';
+  $('#backlog-resume').hidden = !canAct() || b.state !== 'paused';
+  $('#backlog-empty').hidden = b.channels.length > 0;
+  $('#backlog-table').hidden = b.channels.length === 0;
+  // Newest first: what was just added is what people look for.
+  const rows = [...b.channels].reverse();
+  $('#backlog-table tbody').replaceChildren(...rows.map((c) => {
+    const open = ['pending', 'migrating'].includes(c.status);
+    return el('tr', { class: c.status === 'removed' ? 'off' : null },
+      el('td', {},
+        el('button', { type: 'button', class: 'link', onclick: () => showBacklogChannel(c.id) }, `@${c.channel}`),
+        el('div', { class: 'v-meta' }, `added by @${c.addedBy}, ${when(c.addedAt)}`),
+        c.error ? el('div', { class: 'item-err' }, c.error) : null),
+      el('td', { class: 'c-state' }, el('span', { class: `ch-state ${c.status}${c.failed ? ' failed' : ''}` }, channelState(c))),
+      el('td', {}, channelProgress(c)),
+      el('td', { class: 'c-size' }, c.toCopyBytes ? mb(c.toCopyBytes) : ''),
+      el('td', { class: 'c-do' },
+        canAct() && c.failed && c.status !== 'removed' ? el('button', { type: 'button', class: 'btn small', onclick: () => backlogAction(c, 'retry') }, 'Retry failed') : null,
+        canAct() && open ? el('button', { type: 'button', class: 'btn small quiet danger', onclick: () => backlogAction(c, 'remove') }, 'Remove') : null));
+  }));
+}
+
+async function addToBacklog(e) {
+  e.preventDefault();
+  const text = $('#backlog-channels').value;
+  try {
+    const r = await api('/api/backlog/channels', { method: 'POST', body: { channels: text.split(/[\s,;]+/).filter(Boolean) } });
+    const skipped = r.skipped.map((s) => `@${s.channel} (${s.reason})`).join(', ');
+    notice(`${r.added.length ? `Added ${r.added.length} channel(s).` : 'Nothing added.'}${skipped ? ` Skipped: ${skipped}.` : ''}`, r.added.length ? 'info' : 'error');
+    if (r.added.length) $('#backlog-channels').value = '';
+    await refreshBacklog();
+  } catch (err) { notice(`Could not add: ${err.message}`, 'error'); }
+}
+
+async function backlogAction(c, action) {
+  if (action === 'remove' && !(await ask(`Remove @${c.channel} from the backlog?`,
+    'Its waiting videos are skipped and its queued ones cancelled. Videos already copied stay in S3. You can add the channel again later.',
+    'Remove', 'Keep it'))) return;
+  try {
+    const r = await api(`/api/backlog/channels/${c.id}/${action}`, { method: 'POST', body: {} });
+    if (action === 'retry') notice(`${r.retried} failed video(s) of @${c.channel} will be tried again.`);
+    await refreshBacklog();
+    await refreshJobs();
+  } catch (err) { notice(`${action === 'retry' ? 'Retry' : 'Remove'} failed: ${err.message}`, 'error'); }
+}
+
+async function setBacklogPaused(paused) {
+  try {
+    state.backlog = await api(`/api/backlog/${paused ? 'pause' : 'resume'}`, { method: 'POST', body: {} });
+    renderBacklog();
+  } catch (err) { notice(`Could not ${paused ? 'pause' : 'resume'}: ${err.message}`, 'error'); }
+}
+
+async function showBacklogChannel(id) {
+  const c = await api(`/api/backlog/channels/${id}`);
+  $('#detail-title').textContent = `@${c.channel} in the backlog`;
+  const order = ['failed', 'queued', 'pending', 'done', 'present', 'skipped'];
+  const videos = [...c.videos].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status) || a.id - b.id);
+  $('#detail-body').replaceChildren(...[
+    el('div', {}, `${CHANNEL_STATE[c.status] ?? c.status}. Added by @${c.addedBy}, ${when(c.addedAt)}${c.listedAt ? `; listed ${when(c.listedAt)}` : ''}.`),
+    videos.length ? null : el('div', { class: 'empty' }, c.status === 'pending' ? 'Not listed yet.' : 'This channel has no videos.'),
+    el('ol', { class: 'bl-videos' }, videos.map((v) => el('li', { class: `bl-video ${v.status}` },
+      el('div', { class: 'item-head' },
+        el('span', { class: 'item-name' }, v.title ?? v.permlink ?? v.docId),
+        el('span', { class: `item-state ${v.status}` }, VIDEO_STATE[v.status] ?? v.status)),
+      el('div', { class: 'v-meta' },
+        v.permlink ? el('span', {}, v.permlink) : null,
+        v.bytes ? el('span', {}, mb(v.bytes)) : v.size ? el('span', {}, `about ${mb(v.size)}`) : null,
+        v.itemId ? el('button', { type: 'button', class: 'link', onclick: () => showItem(v.itemId) }, `queue item ${v.itemId}`) : null),
+      v.reason ? el('div', { class: v.status === 'failed' ? 'item-err' : 'v-why' }, v.reason) : null))),
+  ].filter(Boolean));
+  if (!$('#detail').open) $('#detail').showModal();
+}
+
 // ---------------------------------------------------------------- live updates
 
 function connect() {
@@ -463,6 +592,7 @@ function connect() {
       if (state.channel && ['done', 'failed', 'cancelled'].includes(row.status)) loadChannel().catch(() => {});
     }, 300);
   });
+  es.addEventListener('backlog', () => refreshBacklog().catch(() => {}));
   es.onerror = () => { $('#live').textContent = 'reconnecting'; $('#live').className = 'live'; };
 }
 
@@ -477,12 +607,16 @@ $('#migrate').addEventListener('click', showPlan);
 $('#plan').addEventListener('close', onPlanClose);
 $('#preview').addEventListener('close', closePreview);
 $('#preview-mode').addEventListener('change', setPreviewMode);
+$('#backlog-form').addEventListener('submit', addToBacklog);
+$('#backlog-pause').addEventListener('click', () => setBacklogPaused(true));
+$('#backlog-resume').addEventListener('click', () => setBacklogPaused(false));
 
 (async () => {
   try { state.me = await api('/api/me'); } catch (_) { /* logged out */ }
   renderSession();
   try { state.status = await api('/api/status'); renderFacts(); } catch (_) { /* shown as missing facts */ }
   await refreshJobs().catch(() => {});
+  await refreshBacklog().catch(() => {});
   connect();
   const fromHash = decodeURIComponent(location.hash.slice(1));
   if (fromHash) { $('#channel').value = fromHash; loadChannel(); }

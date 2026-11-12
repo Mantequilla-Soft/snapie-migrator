@@ -36,11 +36,38 @@ player and lists where each playlist and segment really came from: the S3 zone,
 S3 direct, the hotnode, or an IPFS gateway. A migrated video that has quietly
 fallen back to IPFS plays just as well, and this is how you tell.
 
+## Migrating many channels: the backlog
+
+Paste a list of Hive usernames into **Backlog** and the migrator works through
+them on its own, slowly:
+
+- **One channel at a time,** in the order they were added. Each channel is listed
+  when its turn comes, and each video is checked again right before it is queued.
+- **It only fills idle time.** At most `MAX_CONCURRENT` backlog videos are in the
+  queue at once, and manual migrations always go first.
+- **It is paced:** at most `BACKLOG_DAILY_GB` copied in any 24 h, and optionally
+  only during `BACKLOG_HOURS` (UTC). Pause and Resume are on the page.
+- **Videos it leaves alone:**
+  - videos younger than `BACKLOG_MIN_AGE_DAYS`, which the hotnode copies;
+  - videos bigger than the disk budget;
+  - anything a manual run would refuse.
+
+  Each one is listed with the reason.
+- **Unattended failures:**
+  - network errors, a full disk and the like are tried again after 6 h and then 24 h;
+  - a verification failure stays failed until someone presses **Retry failed**;
+  - 5 failures in a row pause the whole backlog, with the last error as the reason.
+
+Adding a channel that has finished lists it again and picks up its newer videos.
+
 ## Who can do what
 
 Anyone can open the page and look at channels and jobs. To act, log in with Hive
 Keychain (posting key) as an account in `ALLOWED_USERS`. Any other account sees
-the page read-only, with the buttons disabled.
+the page read-only, with the buttons disabled. The same goes for the backlog:
+anyone can see it, and only allowed accounts can add channels, pause, resume,
+remove or retry. The videos it copies are recorded as migrated by whoever added
+the channel.
 
 The hotnode can queue copies through a separate API on `127.0.0.1:SERVICE_PORT`,
 using a Bearer token (`MIGRATOR_SERVICE_TOKEN`). That port is never exposed through

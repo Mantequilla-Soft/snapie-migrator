@@ -455,7 +455,59 @@ two can't drift without someone noticing.
 
 ---
 
-## 14. Out of scope (v1)
+## 14. The backlog (issue #9)
+
+A list of channels that the migrator works through slowly, unattended. It only
+decides what goes into the queue (§7) and when. Every video still goes through
+§3 exactly like a manual migration (`mode: 'archived'`), and is recorded as
+migrated by the account that added the channel.
+
+- **State:** `backlog_channels` (`pending → migrating → done`, or `removed`),
+  `backlog_videos` and `settings` (pause, the failure streak), all in the
+  queue's SQLite database.
+- **Listing:** a channel is listed only when nothing else is left to feed. Each
+  video becomes one of:
+  - *to copy*;
+  - *already in S3*;
+  - *skipped* with a reason:
+    - not eligible (§3 step 1);
+    - younger than `BACKLOG_MIN_AGE_DAYS`, left to the hotnode;
+    - bigger than `DISK_BUDGET_GB`.
+
+  Adding a finished channel again lists it again. Videos already copied stay as
+  they are.
+- **Feeding:**
+  - At most `MAX_CONCURRENT` backlog items are queued or running at once.
+  - They carry a lower queue priority than everything else, so a manual job (or a
+    hotnode request) always runs first.
+  - Each video is planned again (§5) right before it is queued.
+  - One queue job per channel.
+- **Pacing:**
+  - `BACKLOG_DAILY_GB`: a rolling 24 h cap on bytes copied (decimal GB; 0 = none).
+  - `BACKLOG_HOURS`: an optional UTC window for starting new videos.
+  - Pause and resume.
+
+  A running item always finishes.
+- **Failures:**
+  - **Errors that may pass**: network, out of space, the document changed. Once the
+    queue's own retries are used up, these are tried again after 6 h and then 24 h,
+    then marked failed.
+  - **`VerifyError`**: failed at once.
+  - **No longer eligible**: skipped.
+  - **5 failures in a row**: the backlog pauses itself, with the last error as the
+    reason. A success resets the count.
+- **Restart:** on boot, items that finished while the backlog wasn't listening
+  are settled, and a queued video whose item is gone is queued again.
+- **API:**
+  - `GET /api/backlog`, `GET /api/backlog/channels/:id`: open, like the other reads.
+  - `POST /api/backlog/channels` `{ channels }`, `/pause`, `/resume`,
+    `/channels/:id/remove`, `/channels/:id/retry`: allowed accounts only.
+  - The SSE stream sends a `backlog` event (at most once a second) when anything
+    changes.
+
+---
+
+## 15. Out of scope (v1)
 
 - Unpinning anything, and deleting anything from S3.
 - The broken-owner assets the player finds through `hive_author` /
@@ -463,7 +515,7 @@ two can't drift without someone noticing.
 - The hotnode integration itself. Only the API is ready for it.
 - Several gateways or several buckets.
 
-## 15. Resolved / open items
+## 16. Resolved / open items
 
 1. ~~Hotnode gateway~~: `https://hotipfs-1.3speak.tv`, using the header form
    (§2). The Bunny hot zone returns an empty CAR, so it is never used as a

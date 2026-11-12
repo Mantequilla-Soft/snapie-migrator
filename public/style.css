@@ -233,3 +233,40 @@ a.btn { display: inline-block; text-decoration: none; }
 .mode input { accent-color: var(--glacier); margin: 0; }
 .mode label:has(input:checked) { background: var(--glacier-soft); color: var(--ink); font-weight: 600; }
 .mode label:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+/* --- backlog (issue #9) --- */
+.backlog { padding: 0 clamp(16px, 4vw, 40px) 48px; display: grid; gap: 12px; }
+.backlog-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.backlog-head .actions { margin-left: auto; }
+.backlog-summary { margin: 0; color: var(--ink-soft); max-width: 90ch; }
+.backlog-add { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 10px; align-items: start; }
+.backlog-add label { font-weight: 600; padding-top: 6px; }
+.backlog-add textarea {
+  font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 6px 10px; resize: vertical; min-height: 2.4em; width: 100%;
+}
+.backlog-add textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+@media (max-width: 640px) {
+  .backlog-add { grid-template-columns: minmax(0, 1fr); }
+  .backlog-add label { padding-top: 0; }
+  /* The shared mobile table rule keeps a 34px checkbox column; this table has none. */
+  .backlog .table tr { grid-template-columns: minmax(0, 1fr); }
+  .backlog .table td:empty { display: none; }
+  .backlog .table td.c-size::before { content: "To copy: "; color: var(--ink-soft); }
+}
+.backlog .table td .meter { margin: 6px 0 4px; max-width: 28rem; }
+.backlog .table td .meter > i { background: var(--pine); }
+.c-state, .c-size { white-space: nowrap; }
+.ch-state { font-size: 0.85rem; font-weight: 600; }
+.ch-state.migrating { color: var(--glacier); }
+.ch-state.done { color: var(--pine); }
+.ch-state.pending, .ch-state.removed { color: var(--ink-soft); }
+.link { background: none; border: 0; padding: 0; font: inherit; color: var(--glacier); font-weight: 600; cursor: pointer; text-align: left; }
+.link:hover { text-decoration: underline; }
+.link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+.v-meta .link { font-weight: 400; font-size: inherit; }
+.bl-videos { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 60vh; overflow: auto; }
+.bl-video { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px; }
+.item-state.queued, .item-state.pending { color: var(--glacier); }
+.item-state.present, .item-state.skipped { color: var(--ink-soft); }
+.ch-state.failed { color: var(--brick); }

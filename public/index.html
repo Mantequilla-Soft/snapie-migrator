@@ -75,6 +75,36 @@
     </aside>
   </main>
 
+  <section class="backlog" aria-labelledby="backlog-title">
+    <div class="backlog-head">
+      <h2 id="backlog-title">Backlog</h2>
+      <span id="backlog-state" class="badge"></span>
+      <div class="actions">
+        <button id="backlog-pause" type="button" class="btn" hidden>Pause</button>
+        <button id="backlog-resume" type="button" class="btn" hidden>Resume</button>
+      </div>
+    </div>
+    <p id="backlog-summary" class="backlog-summary"></p>
+    <form id="backlog-form" class="backlog-add" hidden>
+      <label for="backlog-channels">Add channels</label>
+      <textarea id="backlog-channels" rows="2" placeholder="Hive usernames, one per line or separated by commas" spellcheck="false" autocomplete="off" required></textarea>
+      <button class="btn primary" type="submit">Add to backlog</button>
+    </form>
+    <p id="backlog-empty" class="empty">No channels yet. Add usernames and the migrator copies their videos slowly, on its own, within the limits above.</p>
+    <table id="backlog-table" class="table" hidden>
+      <thead>
+        <tr>
+          <th>Channel</th>
+          <th class="c-state">State</th>
+          <th>Progress</th>
+          <th class="c-size">To copy</th>
+          <th class="c-do"><span class="sr">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
   <dialog id="plan" class="plan">
     <form method="dialog" class="plan-inner">
       <h2>Dry run</h2>
@@ -92,7 +122,7 @@
       <h2 id="ask-title"></h2>
       <p id="ask-text"></p>
       <div class="plan-actions">
-        <button value="no" class="btn quiet">Keep it in S3</button>
+        <button id="ask-no" value="no" class="btn quiet">Keep it in S3</button>
         <button id="ask-yes" value="yes" class="btn primary"></button>
       </div>
     </form>

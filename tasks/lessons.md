@@ -34,3 +34,10 @@
 - Rule: with several sources, a source's answer only counts once it has been
   verified; a verification failure moves on to the next source. Fail for good only
   when every source has failed.
+
+## A new table inherits the shared mobile rules
+- The backlog table looked fine on desktop. At 390px it squeezed every column into
+  the 34px checkbox column, because the shared `.table` rule for phones assumes the
+  videos table's layout.
+- Rule: every new table or list gets a screenshot at phone width (390px) before it
+  is called done, and its `@media` overrides sit next to its own styles.

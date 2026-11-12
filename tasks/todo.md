@@ -141,3 +141,32 @@ Spec: ../SPEC.md. Rule: **a video is "done" only when the CAR is verified, the S
 - Ruleset not created: the org's plan doesn't allow branch rules on private repos
   (HTTP 403).
 
+
+## Backlog (issue #9, 2026-11-12)
+- [x] queue.js: `priority` column (migrated in place on an existing db), ORDER BY priority, id; enqueue({ priority, jobId }) appends to a job
+- [x] backlog.js: tables (backlog_channels, backlog_videos, settings), add / list / feed / settle / pause / remove / retry, rolling 24 h cap, hours window, later retries (6 h, 24 h), pause after 5 failures in a row, catch-up on boot
+- [x] config.js: BACKLOG_DAILY_GB, BACKLOG_HOURS, BACKLOG_MIN_AGE_DAYS
+- [x] server.js: /api/backlog routes + SSE "backlog" event; index.js wiring
+- [x] UI: Backlog section, add form, pause/resume, channel table, channel dialog
+- [x] tests: backlog.test.js (real Queue + fake run), server routes, config
+- [x] docs: SPEC §16, README, DEPLOYMENT, .env.example
+- [x] end to end: local run against real Mongo/S3 with a tiny channel list, in the browser
+
+### Review (2026-11-12)
+- 232 tests (20 new backlog/priority tests, 3 server, 1 config). Mutation check: ordering by id
+  instead of priority fails 2 tests; not resetting the failure streak fails 1.
+- Browser run on the harness (real app, pipeline and queue; in-memory Mongo, fake S3,
+  local gateway). The run found and fixed:
+  - a wrong harness CAR made every video fail verification. That showed the
+    5-in-a-row auto-pause working, with the reason on the page;
+  - a channel whose videos all failed read "Done": now "Done, N failed" in red;
+  - the daily cap read "53.69 GB" for 50 (GiB vs the page's GB): the cap is now decimal GB;
+  - the wait reason repeated the numbers ("0.0 GB … cap 0 GB"): now plain words;
+  - "null" printed in the channel dialog, and in the existing item dialog
+    (replaceChildren turns null into text): children are filtered;
+  - at 390px the backlog table squeezed into the 34px checkbox column of the shared
+    mobile rule: overridden;
+  - "Paused: paused by @meno": now "Paused by @meno".
+- Copies checked in the harness: Mongo has `archived` + `s3_*`, `s3_migrated_by` is
+  the account that added the channel, and the objects are in the fake S3.
+- Not done here: a run on the real VPS (needs the deploy first).
