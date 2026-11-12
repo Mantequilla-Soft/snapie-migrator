@@ -101,6 +101,11 @@
   <dialog id="preview" class="plan wide">
     <form method="dialog" class="plan-inner">
       <h2 id="preview-title">Preview</h2>
+      <fieldset id="preview-mode" class="mode">
+        <legend class="sr">Playback</legend>
+        <label title="Only the source Mongo assigns, no fallback: a broken copy fails here"><input type="radio" name="preview-mode" value="strict" checked> Assigned source only</label>
+        <label title="Normal playback, with every fallback a viewer gets"><input type="radio" name="preview-mode" value="viewer"> Like a viewer</label>
+      </fieldset>
       <div id="preview-frame" class="preview-frame"></div>
       <p id="preview-verdict" class="verdict wait" role="status"></p>
       <div id="preview-body" class="preview-body"></div>

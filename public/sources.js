@@ -25,22 +25,58 @@ export function classify(url, hosts) {
   return { kind: 'other', label: host, host };
 }
 
-/** The player's embed URL for a row: legacy videos are /watch, embed-video ones /embed. */
-export function embedUrl(playerBase, row) {
+/**
+ * The player's embed URL for a row: legacy videos are /watch, embed-video ones /embed.
+ * `strict`: play only from the source Mongo assigns (the player's ?strict=1).
+ */
+export function embedUrl(playerBase, row, { strict = false } = {}) {
   const page = row.collection === 'legacy' ? 'watch' : 'embed';
   const v = `${encodeURIComponent(row.owner)}/${encodeURIComponent(row.permlink)}`;
-  return `${playerBase}/${page}?v=${v}&mode=iframe`;
+  return `${playerBase}/${page}?v=${v}&mode=iframe${strict ? '&strict=1' : ''}`;
 }
+
+// Strict mode only exists for a video with an S3 copy (the player's strictPlayback).
+export const STRICT_APPLIES = new Set(['archived', 'hot']);
 
 // Which sources Mongo says this video should play from.
 const EXPECTED = { archived: ['s3'], hot: ['hot', 's3'], ipfs: ['hot', 'ipfs'] };
 
 /**
- * All reports so far → { groups, segments, failed, verdict: { level, text } }.
+ * All reports so far → { groups, segments, failed, strictOn, verdict: { level, text } }.
  * groups: one per source label, with its playlist and segment counts.
  * level: 'wait' (no segment yet), 'ok', 'warn' (not where Mongo says), 'info'.
+ * `strict`: the preview asked the player for strict playback.
  */
-export function summarize(reports, hosts, storage) {
+export function summarize(reports, hosts, storage, { strict = false } = {}) {
+  const out = viewerSummary(reports, hosts, storage);
+  out.strictOn = reports.some((r) => r.strict === true);
+  if (!strict) return out;
+  const v = out.verdict;
+  if (!STRICT_APPLIES.has(storage)) {
+    out.verdict = { level: v.level, text: `${v.text} (Strict mode only applies to a video with an S3 copy, so this one plays as usual.)` };
+  } else if (!out.strictOn) {
+    if (reports.length) out.verdict = { level: v.level === 'ok' ? 'info' : v.level, text: `The player ignored strict mode (an older version), so this is normal playback. ${v.text}` };
+  } else {
+    out.verdict = strictVerdict(out, storage);
+  }
+  return out;
+}
+
+// In strict mode nothing falls back: every failure is the assigned source failing,
+// and every segment must come from it.
+function strictVerdict(out, storage) {
+  const { failed, segments } = out;
+  const where = storage === 'archived' ? 'the S3 copy' : 'the hotnode';
+  const want = storage === 'archived' ? 's3' : 'hot';
+  const fromIt = out.groups.filter((g) => g.kind === want).reduce((n, g) => n + g.segments, 0);
+  if (failed) return { level: 'warn', text: `Strict: ${failed} request${failed === 1 ? '' : 's'} to ${where} failed, and nothing falls back in strict mode. ${segments} segment${segments === 1 ? '' : 's'} loaded.` };
+  if (!segments) return { level: 'wait', text: `Strict: playing from ${where} only. Press play.` };
+  if (fromIt !== segments) return { level: 'warn', text: `Strict: ${segments - fromIt} of ${segments} segments came from somewhere other than ${where}, although strict mode was on.` };
+  const hint = storage === 'hot' ? ' (For a hot video the assigned source is the hotnode; S3 is its backup and is not tested here.)' : '';
+  return { level: 'ok', text: `Strict: every segment came from ${where} (${segments}), with no fallback.${hint}` };
+}
+
+function viewerSummary(reports, hosts, storage) {
   const groups = new Map();
   let segments = 0, failed = 0, proxied = 0;
   const byKind = { s3: 0, hot: 0, ipfs: 0, other: 0 };
