@@ -104,6 +104,26 @@ describe('read-only routes are open', () => {
     expect(res.headers['x-frame-options']).toBe('DENY');
   });
 
+  it('without PLAYER_BASE_URL: no preview, and the page may frame nothing', async () => {
+    const res = await request(app).get('/api/status');
+    expect(res.body).toMatchObject({ player: null, sourceHosts: { bucket: 'videos-test', hot: ['hotipfs-3speak-1.b-cdn.net'] } });
+    expect((await request(app).get('/')).headers['content-security-policy']).toContain("frame-src 'none'");
+  });
+
+  it('with PLAYER_BASE_URL: the page may frame the player, and only the player', async () => {
+    const withPlayer = createApp({ cfg: { ...cfg, playerBaseUrl: 'https://play.test', hotnodeGateway: 'https://hotipfs-1.3speak.tv' }, db, queue, auth, budget: new DiskBudget({ dir, budgetBytes: 1, reserveBytes: 0, statfs: async () => ({ bavail: 1, bsize: 1 }) }) });
+    const page = await request(withPlayer).get('/');
+    expect(page.headers['content-security-policy']).toMatch(/frame-src https:\/\/play\.test;/);
+    expect(page.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    const { body } = await request(withPlayer).get('/api/status');
+    expect(body.player).toBe('https://play.test');
+    expect(body.sourceHosts).toEqual({
+      bucket: 'videos-test',
+      s3: [{ host: 'buttercloud.b-cdn.net', label: 'S3 (Bunny zone buttercloud.b-cdn.net)' }, { host: 's3.3speak.tv', label: 'S3 direct (s3.3speak.tv)' }],
+      hot: ['hotipfs-3speak-1.b-cdn.net', 'hotipfs-1.3speak.tv'],
+    });
+  });
+
   it('bad channel names are 400, unknown API paths 404', async () => {
     expect((await request(app).get('/api/channel/$where')).status).toBe(400);
     expect((await request(app).get('/api/nope')).status).toBe(404);

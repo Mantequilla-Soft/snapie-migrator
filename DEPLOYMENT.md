@@ -121,11 +121,14 @@ Run these in order, and stop at the first one that fails.
    **Can migrate**.
 4. **Dry run:** load `coolmole`, select one video, and press **Dry run**. Read the
    `$set` it shows.
-5. **One video:** migrate it. When it's done, open it in the player with DevTools'
-   Network tab. The manifest request is the player's
-   `/hls?u=https%3A%2F%2Fbuttercloud.b-cdn.net%2F…&s3=1`, and the segments come
-   from `buttercloud.b-cdn.net`, directly or through the player's `/seg`. Nothing
-   should come from an IPFS gateway.
+5. **One video:** migrate it. When it's done, press **Play** on its row. The
+   real player opens in a panel that lists where every playlist and segment
+   came from. Expect "Every segment so far came from S3". One or two segments
+   from an IPFS gateway mean S3 was slow for them at that moment; none from S3
+   at all is a problem. (This needs `PLAYER_BASE_URL` and a player with source
+   reporting, SnapieVideoPlayer #64. Without it, use DevTools' Network tab: the
+   segments come from `buttercloud.b-cdn.net` or `s3.3speak.tv`, through the
+   player's `/seg`.)
 6. **Back out:** press **Check IPFS** (it should be done, with no errors), then
    **Revert**. The video plays from IPFS again, and the S3 copy stays.
 7. **The whole channel:** select all eligible videos and migrate.
