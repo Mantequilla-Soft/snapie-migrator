@@ -32,7 +32,7 @@ export const SOURCE_FIELD = Object.freeze({ [COLLECTION.LEGACY]: 'video_v2', [CO
 // The player's CID regex in storagePlan: `ipfs://<cid>` up to the first / ? or #.
 const IPFS_URL_RE = /^ipfs:\/\/([^/?#]+)(?:\/([^?#]*))?$/;
 // CIDv0 (Qm…, base58btc) or CIDv1 (b…, base32 lower). Anything else is not a CID we can fetch.
-const CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,})$/;
+export const CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,})$/;
 
 /**
  * Where a document's video lives on IPFS, as the player sees it.

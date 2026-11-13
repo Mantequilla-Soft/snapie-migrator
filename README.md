@@ -71,9 +71,12 @@ anyone can see it, and only allowed accounts can add channels, pause, resume,
 remove or retry. The videos it copies are recorded as migrated by whoever added
 the channel.
 
-The hotnode can queue copies through a separate API on `127.0.0.1:SERVICE_PORT`,
+The hotnode asks for copies through a separate API on `127.0.0.1:SERVICE_PORT`,
 using a Bearer token (`MIGRATOR_SERVICE_TOKEN`). That port is never exposed through
-nginx.
+nginx. It asks by CID, and hears back through signed callbacks to
+`HOTNODE_CALLBACK_URL` when each copy is done or has failed. After it unpins a
+video it asks for the flip to `archived`, and it can look up the state of any CID
+to catch up (SPEC §15).
 
 ## Commands
 

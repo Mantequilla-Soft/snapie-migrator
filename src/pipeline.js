@@ -16,6 +16,8 @@ import { COLLECTION, STORAGE_STATE, carKey, migrateFilter, migratedFields, objec
 import { planReadback, readBack } from './readback.js';
 import { etagFor } from './s3.js';
 
+const S3_CHECK = { code: 's3_check_failed' };
+
 export const STAGES = Object.freeze(['resolve', 'download', 'verify', 'upload', 'check', 'mongo', 'player', 'done']);
 
 const collectionName = (cfg, collection) =>
@@ -118,7 +120,7 @@ export async function runItem(item, deps, { signal, onProgress = () => {} } = {}
       wanted.set(objectKey(cid, f.path), { file: f, etag });
     }
     const extra = [...existing.keys()].filter((k) => !wanted.has(k));
-    if (extra.length) throw new VerifyError(`S3 already has ${extra.length} object(s) under ${cid}/ that are not in the video (e.g. ${extra[0]})`);
+    if (extra.length) throw new VerifyError(`S3 already has ${extra.length} object(s) under ${cid}/ that are not in the video (e.g. ${extra[0]})`, S3_CHECK);
     const carEtag = await etagFor(fileChunks(dest), carBytes, bucket.partSize);
 
     const totalBytes = car.bytes + carBytes;
@@ -145,14 +147,14 @@ export async function runItem(item, deps, { signal, onProgress = () => {} } = {}
     // 6. check: exactly these objects, byte for byte, and fetchable by viewers
     stage('check', { cid });
     const after = await bucket.list(`${cid}/`, { signal });
-    if (after.size !== wanted.size) throw new VerifyError(`S3 lists ${after.size} objects under ${cid}/, expected ${wanted.size}`);
+    if (after.size !== wanted.size) throw new VerifyError(`S3 lists ${after.size} objects under ${cid}/, expected ${wanted.size}`, S3_CHECK);
     for (const [key, { file, etag }] of wanted) {
       const o = after.get(key);
-      if (!o) throw new VerifyError(`${key} is missing from S3`);
-      if (o.size !== file.size || o.etag !== etag) throw new VerifyError(`${key} in S3 differs (size ${o.size}/${file.size}, etag ${o.etag}/${etag})`);
+      if (!o) throw new VerifyError(`${key} is missing from S3`, S3_CHECK);
+      if (o.size !== file.size || o.etag !== etag) throw new VerifyError(`${key} in S3 differs (size ${o.size}/${file.size}, etag ${o.etag}/${etag})`, S3_CHECK);
     }
     const carObj = await bucket.head(carKey(cid), { signal });
-    if (!carObj || carObj.size !== carBytes || carObj.etag !== carEtag) throw new VerifyError(`${carKey(cid)} in S3 differs or is missing`);
+    if (!carObj || carObj.size !== carBytes || carObj.etag !== carEtag) throw new VerifyError(`${carKey(cid)} in S3 differs or is missing`, S3_CHECK);
 
     const readText = async (p) => {
       const chunks = [];

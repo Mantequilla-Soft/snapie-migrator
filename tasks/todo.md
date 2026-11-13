@@ -178,3 +178,26 @@ Spec: ../SPEC.md. Rule: **a video is "done" only when the CAR is verified, the S
 - [x] DEPLOYMENT.md section 0 (the two instances), the supernode and hotnode .env, a Garage key, smoke:s3 on Garage, CI/CD environments; README, SPEC, .env.example
 - [x] Checked: `npm run check:car` with LOCAL_GATEWAY set to a local stub gateway downloads from it first and verifies (234 tests)
 - [ ] On the supernode (the user): Garage key, .env, `npm run smoke:s3` against Garage, `check:car` against the real local Kubo
+
+## Hotnode service API (issue #8, 2026-11-13)
+- [x] errors.js: a `code` on every error kind, ERROR_CODES (retryable or not), codeOf(item) falling back on the stage; readback and S3-check VerifyErrors tagged
+- [x] queue.js: `error_code` column (added by ALTER on old databases), stored on failure, retry and cancel
+- [x] hotnode.js: requestCids (resolve to ready docs, idempotent, already_copied, rejected reasons), settle → outbox in the transaction that closes the request, ordered signed delivery with backoff and a 7-day give-up, archive (HEAD the zone, conditional flip, player check), cidState, summary
+- [x] config.js: HOTNODE_CALLBACK_URL (loopback only) + HOTNODE_CALLBACK_SECRET (≥ 32), both or neither, needs MIGRATOR_SERVICE_TOKEN
+- [x] server.js: service `POST /api/jobs { cids }`, `POST /api/archive`, `GET /api/cids/:cid`; `{ error, code }` answers; `/api/status.hotnode`
+- [x] page: a "Hotnode" fact (up to date / N not delivered, last error), status refreshed every minute
+- [x] tests: hotnode.test.js (20), config (+1)
+- [x] docs: SPEC §8 and new §15 (Out of scope → §16, open items → §17), README, DEPLOYMENT, .env.example
+- [x] end to end on a harness
+
+### Review (2026-11-13)
+- 255 tests. Mutation check, each caught: delivering newest first, settling while items still run, ignoring the stored error code, no backoff, a signature without the timestamp (caught once the test spelled out the HMAC independently, instead of reusing sign()), "copied" without `s3_migrated_by`.
+- Harness (real pipeline, queue, HotnodeService and service API; in-memory Mongo, fake S3, a local gateway with the real CAR, a fake hotnode receiver that verifies signatures, and the real SnapieVideoPlayer on the same Mongo):
+  - one call: QmUaWTmY… queued as 2 items (legacy + embed; the deleted copy ignored), a bare-CID video `not_ipfs`, an unknown CID `not_in_mongo`; asking again gave `in_progress` with the same items;
+  - the receiver answered 500 to the first `copied`; the same event id got through on the retry about a minute later;
+  - the player was still starting when the copies finished, so `copied` carried two player-check warnings, as designed;
+  - `/api/archive` flipped both documents, the player check found the S3 zone, and an `archived` event arrived; a second call answered `archived: 0, already: 2`;
+  - the real player's strict mode then answered `strict: true` with the zone URL, for the legacy video (`/api/watch`) and the short (`/api/embed`);
+  - `/api/cids` reported `archived`, last event delivered; archive of an uncopied CID answered `409 not_copied`; no token answered 401;
+  - the page showed "Hotnode: up to date".
+- Not done here: the hotnode side (hotnode#19), and a run on the real hotnode VPS.

@@ -123,7 +123,23 @@ PUBLIC_BASE_URL=http://localhost:3020          # the page through an SSH tunnel:
 LOCAL_GATEWAY=http://127.0.0.1:8080            # the hotnode's Kubo gateway port
 S3_ENDPOINT=https://…                          # Buttercloud, with the bucket owner's API key
 MIGRATOR_SERVICE_TOKEN=                        # openssl rand -hex 32; the same value goes in the hotnode's .env
+HOTNODE_CALLBACK_URL=http://127.0.0.1:<hotnode port>/api/s3/callback   # loopback only
+HOTNODE_CALLBACK_SECRET=                       # openssl rand -hex 32; the same value goes in the hotnode's .env
 ```
+
+The hotnode needs the same token and secret, and `MIGRATOR_SERVICE_URL=http://127.0.0.1:3021`
+(hotnode#19). To check the wiring once both run, on the hotnode:
+
+```bash
+curl -s -H "Authorization: Bearer $MIGRATOR_SERVICE_TOKEN" http://127.0.0.1:3021/api/cids/<a CID it pins>
+```
+
+`state` should be `unknown` (never asked for) or the real state. The migrator's
+log names the callback URL at start ("events to …"), and its page shows
+"Hotnode: up to date" once events get through.
+
+Disk: `WORK_DIR` and `DISK_BUDGET_GB` sit next to the IPFS repo, so the
+hotnode's capacity cutoff (hotnode#18) should count the work directory.
 
 ## 3. nginx
 

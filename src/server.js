@@ -47,8 +47,10 @@ export function sourceHosts(cfg) {
 
 function errorHandler(err, _req, res, _next) {
   const status = err.status ?? (err instanceof TypeError ? 400 : 500);
-  if (status >= 500) console.error('[api]', err);
-  res.status(status).json({ error: status >= 500 ? 'internal error' : err.message });
+  if (status >= 500 && !err.code) console.error('[api]', err);
+  // `code` is the machine-readable reason the hotnode acts on (hotnode.js); only ours, never a system error's.
+  const code = err.status && typeof err.code === 'string' ? { code: err.code } : {};
+  res.status(status).json({ error: status >= 500 && !err.status ? 'internal error' : err.message, ...code });
 }
 
 /** Shared by both listeners: plan, then queue only what is eligible. */
@@ -125,6 +127,7 @@ export function createApp(deps) {
     bucket: cfg.s3.bucket, cdnHost: cfg.s3.cdnHost, sources: cfg.sourceGateways, maxConcurrent: cfg.maxConcurrent,
     running: queue.running.size, disk: budget.snapshot(), playerCheck: !!cfg.playerBaseUrl,
     player: cfg.playerBaseUrl, sourceHosts: sourceHosts(cfg),
+    hotnode: deps.hotnode?.summary() ?? null,
   }));
   app.get('/api/channel/:user', wrap(async (req, res) => {
     let rows;
@@ -238,7 +241,7 @@ export function createApp(deps) {
 
 /** The hotnode's API: Bearer token, 127.0.0.1 only (bind it there; see index.js). */
 export function createServiceApp(deps) {
-  const { queue, auth } = deps;
+  const { queue, auth, hotnode } = deps;
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '200kb' }));
@@ -248,10 +251,15 @@ export function createServiceApp(deps) {
     if (!auth.serviceOk(req.headers.authorization)) return next(httpError(401, 'bad service token'));
     next();
   });
+  // By Mongo id (`items`, as the page does) or by CID (`cids`, issue #8: what the hotnode knows).
   app.post('/api/jobs', wrap(async (req, res) => {
-    const { items, mode = STORAGE_STATE.HOT, channel = null } = req.body ?? {};
+    const { items, cids, mode = STORAGE_STATE.HOT, channel = null } = req.body ?? {};
+    if (items !== undefined && cids !== undefined) throw httpError(400, 'send items or cids, not both');
+    if (cids !== undefined) return res.status(202).json(await hotnode.requestCids(cids, mode));
     res.status(202).json(await startMigration(deps, { items, mode, channel, by: 'service:hotnode' }));
   }));
+  app.post('/api/archive', wrap(async (req, res) => res.json(await hotnode.archive(req.body?.cid))));
+  app.get('/api/cids/:cid', wrap(async (req, res) => res.json(await hotnode.cidState(req.params.cid))));
   app.get('/api/jobs/:id', (req, res, next) => {
     const job = queue.job(Number(req.params.id));
     return job ? res.json(job) : next(httpError(404, 'no such job'));

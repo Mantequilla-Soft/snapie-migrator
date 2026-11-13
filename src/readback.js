@@ -94,13 +94,13 @@ export async function readBack({ s3, cid, paths, filesByPath, fetchImpl = fetch,
         res = await fetchImpl(url, { signal: attemptSignal, headers: { 'cache-control': 'no-cache' } });
       } catch (e) {
         throwIfAborted(signal);
-        throw new VerifyError(`${host}: ${p} could not be fetched (${e.message})`);
+        throw new VerifyError(`${host}: ${p} could not be fetched (${e.message})`, { code: 'readback_failed' });
       }
-      if (res.status !== 200) throw new VerifyError(`${host}: ${p} answered HTTP ${res.status}`);
+      if (res.status !== 200) throw new VerifyError(`${host}: ${p} answered HTTP ${res.status}`, { code: 'readback_failed' });
       const body = Buffer.from(await res.arrayBuffer());
       const sha = crypto.createHash('sha256').update(body).digest('hex');
       if (body.length !== want.size || sha !== want.sha256) {
-        throw new VerifyError(`${host}: ${p} came back different (${body.length} bytes, expected ${want.size})`);
+        throw new VerifyError(`${host}: ${p} came back different (${body.length} bytes, expected ${want.size})`, { code: 'readback_failed' });
       }
       onProgress({ checked: ++done, total: hosts.length * paths.length });
     }

@@ -89,4 +89,21 @@ describe('loadConfig', () => {
     expect(problemsOf(baseEnv({ LOCAL_GATEWAY: 'http://10.0.0.5:8080' }))).toEqual([expect.stringMatching(/LOCAL_GATEWAY.*must be https/)]);
     expect(problemsOf(baseEnv({ LOCAL_GATEWAY: 'https://hotipfs-3speak-1.b-cdn.net' }))).toEqual([expect.stringMatching(/LOCAL_GATEWAY must be an IPFS node/)]);
   });
+  it('HOTNODE_CALLBACK_URL: loopback only, with a long secret and the service token', () => {
+    const svc = { MIGRATOR_SERVICE_TOKEN: 't'.repeat(40), HOTNODE_CALLBACK_SECRET: 'h'.repeat(40) };
+    expect(loadConfig(baseEnv()).callback).toBeNull();
+    expect(loadConfig(baseEnv({ ...svc, HOTNODE_CALLBACK_URL: 'http://127.0.0.1:3005/api/s3/callback' })).callback)
+      .toEqual({ url: 'http://127.0.0.1:3005/api/s3/callback', secret: 'h'.repeat(40) });
+    expect(loadConfig(baseEnv({ ...svc, HOTNODE_CALLBACK_URL: 'http://[::1]:3005/cb' })).callback.url).toBe('http://[::1]:3005/cb');
+    for (const url of ['https://hotnode.3speak.tv/api/s3/callback', 'http://10.0.0.2:3005/cb', 'http://user:pw@127.0.0.1/cb', 'ftp://127.0.0.1/cb', 'http://127.0.0.1.evil.test/cb']) {
+      expect(problemsOf(baseEnv({ ...svc, HOTNODE_CALLBACK_URL: url }))).toEqual([expect.stringMatching(/HOTNODE_CALLBACK_URL.*127\.0\.0\.1/)]);
+    }
+    expect(problemsOf(baseEnv({ ...svc, HOTNODE_CALLBACK_SECRET: '' , HOTNODE_CALLBACK_URL: 'http://127.0.0.1:3005/cb' })))
+      .toEqual(['HOTNODE_CALLBACK_SECRET is required when HOTNODE_CALLBACK_URL is set']);
+    expect(problemsOf(baseEnv({ ...svc, HOTNODE_CALLBACK_SECRET: 'short', HOTNODE_CALLBACK_URL: 'http://127.0.0.1:3005/cb' })))
+      .toEqual(['HOTNODE_CALLBACK_SECRET must be at least 32 characters']);
+    expect(problemsOf(baseEnv({ HOTNODE_CALLBACK_SECRET: 'h'.repeat(40), HOTNODE_CALLBACK_URL: 'http://127.0.0.1:3005/cb' })))
+      .toEqual([expect.stringMatching(/needs MIGRATOR_SERVICE_TOKEN/)]);
+    expect(problemsOf(baseEnv({ ...svc }))).toEqual(['HOTNODE_CALLBACK_URL is required when HOTNODE_CALLBACK_SECRET is set']);
+  });
 });

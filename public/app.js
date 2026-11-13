@@ -97,8 +97,26 @@ function renderFacts() {
     fact('Zone', s.cdnHost),
     fact('At a time', String(s.maxConcurrent)),
     fact('Player check', s.playerCheck ? 'on' : 'off'),
+    hotnodeFact(s.hotnode, fact),
   );
   renderDisk(s.disk);
+}
+
+// Only on the instance the hotnode calls (a callback is configured): are its events getting through?
+function hotnodeFact(h, fact) {
+  if (!h?.callback) return null;
+  if (!h.pending && !h.givenUp) return fact('Hotnode', h.openRequests ? `${h.openRequests} copies in progress` : 'up to date');
+  const parts = [];
+  if (h.pending) parts.push(`${h.pending} ${h.pending === 1 ? 'update' : 'updates'} not delivered yet${h.lastError ? ` (${h.lastError})` : ''}`);
+  if (h.givenUp) parts.push(`${h.givenUp} given up after 7 days`);
+  const div = fact('Hotnode', parts.join(', '));
+  div.classList.add('warn');
+  div.title = h.oldestPendingAt ? `Waiting since ${new Date(h.oldestPendingAt).toLocaleString()}` : '';
+  return div;
+}
+
+async function refreshStatus() {
+  try { state.status = await api('/api/status'); renderFacts(); } catch (_) { /* shown as missing facts */ }
 }
 
 function renderDisk(d) {
@@ -614,7 +632,8 @@ $('#backlog-resume').addEventListener('click', () => setBacklogPaused(false));
 (async () => {
   try { state.me = await api('/api/me'); } catch (_) { /* logged out */ }
   renderSession();
-  try { state.status = await api('/api/status'); renderFacts(); } catch (_) { /* shown as missing facts */ }
+  await refreshStatus();
+  setInterval(refreshStatus, 60_000);
   await refreshJobs().catch(() => {});
   await refreshBacklog().catch(() => {});
   connect();
