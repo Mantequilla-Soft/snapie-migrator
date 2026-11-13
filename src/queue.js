@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS items (
   progress TEXT,
   error TEXT,
   error_kind TEXT,
+  error_code TEXT,                 -- errors.js ERROR_CODES, for the hotnode
   result TEXT,
   created_at TEXT NOT NULL,
   started_at TEXT,
@@ -89,10 +90,10 @@ export class Queue extends EventEmitter {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.exec(SCHEMA);
-    // Databases created before the backlog have no priority column.
-    if (!this.db.prepare('PRAGMA table_info(items)').all().some((c) => c.name === 'priority')) {
-      this.db.exec(`ALTER TABLE items ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`);
-    }
+    // Columns added after the first release (the backlog's priority, the hotnode's error codes).
+    const columns = new Set(this.db.prepare('PRAGMA table_info(items)').all().map((c) => c.name));
+    if (!columns.has('priority')) this.db.exec('ALTER TABLE items ADD COLUMN priority INTEGER NOT NULL DEFAULT 0');
+    if (!columns.has('error_code')) this.db.exec('ALTER TABLE items ADD COLUMN error_code TEXT');
     this.db.exec('CREATE INDEX IF NOT EXISTS items_next ON items(status, priority, id)');
     this.workDir = workDir;
     this.maxConcurrent = maxConcurrent;
@@ -201,7 +202,7 @@ export class Queue extends EventEmitter {
     const ctrl = new AbortController();
     const entry = { ctrl, cid: row.cid, requeue: false, promise: null };
     this.running.set(row.id, entry);
-    this.update(row.id, { status: 'running', attempts: row.attempts + 1, started_at: this.iso(), stage: STAGES[0], error: null, error_kind: null });
+    this.update(row.id, { status: 'running', attempts: row.attempts + 1, started_at: this.iso(), stage: STAGES[0], error: null, error_kind: null, error_code: null });
     this.event(row.id, 'info', `attempt ${row.attempts + 1} started`);
 
     let lastWrite = 0;
@@ -232,14 +233,14 @@ export class Queue extends EventEmitter {
           this.update(row.id, { status: 'queued', stage: null, progress: null, attempts: row.attempts });
           this.event(row.id, 'warn', 'stopped by shutdown; queued again');
         } else if (err instanceof CancelledError) {
-          this.update(row.id, { status: 'cancelled', finished_at: this.iso(), error: 'cancelled' });
+          this.update(row.id, { status: 'cancelled', finished_at: this.iso(), error: 'cancelled', error_code: 'cancelled' });
           this.event(row.id, 'warn', 'cancelled');
         } else if (isRetryable(err) && attempts < MAX_ATTEMPTS) {
           const wait = this.backoffMs[Math.min(attempts - 1, this.backoffMs.length - 1)];
-          this.update(row.id, { status: 'queued', not_before: this.now() + wait, error: err.message, error_kind: err.name });
+          this.update(row.id, { status: 'queued', not_before: this.now() + wait, error: err.message, error_kind: err.name, error_code: err.code ?? null });
           this.event(row.id, 'warn', `${err.message}; retrying in ${Math.round(wait / 1000)}s`);
         } else {
-          this.update(row.id, { status: 'failed', finished_at: this.iso(), error: err.message, error_kind: err.name });
+          this.update(row.id, { status: 'failed', finished_at: this.iso(), error: err.message, error_kind: err.name, error_code: err.code ?? null });
           this.event(row.id, 'error', `${err.name}: ${err.message}`);
         }
       } finally {
@@ -254,7 +255,7 @@ export class Queue extends EventEmitter {
     if (!row) return null;
     if (row.status === 'queued') {
       this.event(id, 'warn', 'cancelled while queued');
-      return this.update(id, { status: 'cancelled', finished_at: this.iso(), error: 'cancelled' });
+      return this.update(id, { status: 'cancelled', finished_at: this.iso(), error: 'cancelled', error_code: 'cancelled' });
     }
     if (row.status === 'running') this.running.get(id)?.ctrl.abort();
     return row;

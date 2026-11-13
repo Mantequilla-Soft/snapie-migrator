@@ -13,6 +13,7 @@ import { Backlog } from './backlog.js';
 import { listChannel } from './catalog.js';
 import { ConfigError, loadConfig } from './config.js';
 import { DiskBudget } from './disk.js';
+import { HotnodeService } from './hotnode.js';
 import { planItems } from './dryRun.js';
 import { Queue } from './queue.js';
 import { createBucket } from './s3.js';
@@ -52,17 +53,19 @@ const backlog = new Backlog({
   ...cfg.backlog,
   diskBudgetBytes: cfg.diskBudgetBytes,
 });
-const deps = { ...pipelineDeps, queue, auth, version, backlog };
+const hotnode = new HotnodeService({ queue, db, cfg });
+const deps = { ...pipelineDeps, queue, auth, version, backlog, hotnode };
 
 const { requeued } = queue.start();
 const { caught } = backlog.start();
+hotnode.start();
 if (caught) console.log(`[migrator] backlog caught up on ${caught} item(s)`);
 const server = createApp(deps).listen(cfg.port, cfg.host, () => {
   console.log(`[migrator] ${version?.slice(0, 7) ?? 'unknown version'} ${cfg.publicBaseUrl} on ${cfg.host}:${cfg.port}, bucket ${cfg.s3.bucket}, ${cfg.maxConcurrent} at a time, allowed: ${cfg.allowedUsers.join(', ')}`);
   if (requeued) console.log(`[migrator] ${requeued} interrupted item(s) queued again`);
 });
 const service = cfg.serviceToken
-  ? createServiceApp(deps).listen(cfg.servicePort, '127.0.0.1', () => console.log(`[migrator] service API on 127.0.0.1:${cfg.servicePort}`))
+  ? createServiceApp(deps).listen(cfg.servicePort, '127.0.0.1', () => console.log(`[migrator] service API on 127.0.0.1:${cfg.servicePort}${cfg.callback ? `, events to ${cfg.callback.url}` : ', no hotnode callback'}`))
   : null;
 
 let stopping = false;
@@ -74,6 +77,7 @@ async function shutdown(signal) {
   service?.close();
   server.closeAllConnections?.();
   await backlog.stop();
+  await hotnode.stop();
   await queue.stop();
   await mongo.close();
   process.exit(0);

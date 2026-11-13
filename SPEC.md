@@ -273,10 +273,9 @@ Read-only routes are open, as agreed (public page, buttons disabled). Every
 route that changes something checks authorization **on the server**.
 Disabling a button in the UI is only cosmetic.
 
-**`mode: 'hot'`** is for the hotnode later on. It does the same copy but writes
-`storage_state: 'hot'`, so the player keeps playing from the hotnode with S3 as
-the backup. When the hotnode later unpins, it flips the state to `archived`
-(that can be another small endpoint when we get there).
+**`mode: 'hot'`** does the same copy but writes `storage_state: 'hot'`, so the
+player keeps playing from the hotnode with S3 as the backup. When the hotnode
+later unpins, it asks for the flip to `archived` (`POST /api/archive`, §15).
 
 **Service API (the hotnode on the same VPS):** a **separate listener** on
 `127.0.0.1:SERVICE_PORT` (default 3021), started only when
@@ -286,8 +285,10 @@ check on the public listener would protect nothing.
 
 - It takes `Authorization: Bearer <MIGRATOR_SERVICE_TOKEN>` and also checks
   that the TCP peer is loopback.
-- It exposes only `POST /api/jobs` (default `mode: 'hot'`) and
-  `GET /api/jobs/:id` and `/api/items/:id`.
+- It exposes only `POST /api/jobs` (default `mode: 'hot'`; by `items` or by
+  `cids`), `POST /api/archive`, `GET /api/cids/:cid`, and `GET /api/jobs/:id`
+  and `/api/items/:id`. §15 describes the CID routes and the callbacks.
+- An error answer is `{ error, code }`, where `code` is machine-readable.
 - The public listener never accepts the token.
 - `s3_migrated_by` is set to `service:hotnode`.
 
@@ -509,15 +510,103 @@ migrated by the account that added the channel.
 
 ---
 
-## 15. Out of scope (v1)
+## 15. The hotnode integration (issue #8)
+
+The hotnode copies every video it pins to S3 by asking this migrator, which runs
+next to it on the same VPS. hotnode#19 is the other side. The copy is the normal
+pipeline; `src/hotnode.js` only translates CIDs to documents and reports back.
+
+### Copies by CID
+
+`POST /api/jobs { cids: [...], mode: 'hot' }`, at most 100 CIDs. Each CID is
+resolved to every **ready** document that holds it (`videos.video_v2` =
+`ipfs://<cid>[/…]`, an indexed, anchored match; `embed-video.manifest_cid`).
+Documents the player doesn't play (not ready, expired stories) are ignored. The
+answer has one entry per CID:
+
+| `status` | Meaning |
+|---|---|
+| `queued` | new items, listed in `items` |
+| `in_progress` | already asked for and not finished: the same `items` (idempotent) |
+| `already_copied` | every document already has our verified fields; a `copied` event follows anyway |
+| `rejected` | permanent, with `reason`: `not_a_cid`, `not_in_mongo`, `not_ready`, `not_ipfs` (a ready legacy video whose `video_v2` isn't `ipfs://`), `conflict` (foreign `s3_*` fields, `promoting`, an unknown `storage_state`), plus a human `detail` |
+
+A document already in the queue (a manual run, the backlog) is followed as it is,
+moved up to normal priority. "Ours" means a valid `s3_url` for this CID **and**
+`s3_migrated_by`: a valid URL someone else wrote is a `conflict`, not a copy.
+
+### Events (callbacks)
+
+When every item of a CID's request has finished, one event is written to the
+`outbox` table, in the same SQLite transaction that closes the request. That
+happens after every item change, every 30 s and on boot, so a crash in between
+only delays the event.
+
+| `event` | When |
+|---|---|
+| `copied` | every document has our verified fields, re-read from Mongo. A failed player check alone still sends `copied`, with `warnings` |
+| `failed` | an item failed or was cancelled, or a copy disappeared before the event (`changed_during_migration`). `error: { code, message }` and `retryable` |
+| `archived` | after `POST /api/archive` |
+
+Error codes, and whether asking again may help: `download_failed`, `out_of_space`,
+`upload_failed`, `s3_check_failed`, `readback_failed`, `changed_during_migration`,
+`mongo_failed`, `internal` (retryable); `bad_car`, `not_eligible`, `cancelled`
+(not). A VerifyError is `bad_car` unless an S3 check threw it; an error without
+a code is named after the stage it failed in. The queue has already made its own
+3 attempts by then.
+
+Delivery:
+- POSTed to `HOTNODE_CALLBACK_URL` (in `.env` only, never in a request; it must be
+  loopback, checked at boot), oldest first. A failing event holds back the ones
+  after it, so the hotnode sees them in order.
+- Retried after 1 min, doubling up to 1 h, until a 2xx. After 7 days the event is
+  marked `given_up`, and the rest continue. Redirects are not followed.
+- Signed: `X-Migrator-Timestamp` (Unix seconds), and `X-Migrator-Signature:
+  sha256=<hex HMAC-SHA256(HOTNODE_CALLBACK_SECRET, timestamp + "." + body)>`, over
+  the exact body bytes. `X-Migrator-Event` repeats the event `id`. The hotnode
+  rejects timestamps more than 5 minutes off.
+- At least once: a retry sends the same `id`, which the hotnode must ignore the
+  second time.
+- Without a callback configured, events are still kept (marked `off`), so
+  `GET /api/cids/:cid` can show the last one.
+- The page shows "Hotnode: up to date", or how many updates aren't delivered yet
+  and the last error. `/api/status` has the same under `hotnode`.
+
+### Flip to `archived`
+
+`POST /api/archive { cid }`, called by the hotnode right after it unpins.
+- Every ready document must already be ours (`hot` or `archived`), else
+  `409 not_copied`.
+- The manifest is HEADed through the zone first: a 404/403 is
+  `409 copy_missing`, and a network error or another status is
+  `503 copy_check_unavailable` (try again).
+- One conditional `updateOne` per `hot` document: `{ _id, storage_state: 'hot',
+  s3_url, s3_migrated_by: { $exists: true } }` → `$set: { storage_state:
+  'archived' }`. If that matches nothing and the document isn't archived now, the
+  answer is `409 changed`.
+- `200 { cid, documents, archived, already, warnings }`, and an `archived` event.
+  It is idempotent: already archived counts as done.
+- With `PLAYER_BASE_URL` set, the player must now serve the S3 zone. If it
+  doesn't, the answer and the event get a warning.
+
+### State of a CID
+
+`GET /api/cids/:cid` → `{ cid, state, reason?, documents, items, last_event }`,
+with `state` one of `in_progress`, `copied`, `archived`, `failed`, `unknown`.
+It is read from Mongo and our tables, so it is right even when events were lost.
+`last_event` includes its `delivery` status.
+
+---
+
+## 16. Out of scope (v1)
 
 - Unpinning anything, and deleting anything from S3.
 - The broken-owner assets the player finds through `hive_author` /
   `hive_permlink`. They don't show up under `owner`, so they aren't listed.
-- The hotnode integration itself. Only the API is ready for it.
+- The hotnode's side of the integration (hotnode#19). §15 is the migrator's side.
 - Several gateways or several buckets.
 
-## 16. Resolved / open items
+## 17. Resolved / open items
 
 1. ~~Hotnode gateway~~: `https://hotipfs-1.3speak.tv`, using the header form
    (§2). The Bunny hot zone returns an empty CAR, so it is never used as a

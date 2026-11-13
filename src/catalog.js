@@ -18,7 +18,7 @@ export const STORAGE = Object.freeze({ IPFS: 'ipfs', HOT: 'hot', ARCHIVED: 'arch
 
 // Same as the player's storyExpiresAt / isExpiredStory: an expired story plays a
 // placeholder clip, so its video is never shown again.
-function isExpiredStory(doc, now) {
+export function isExpiredStory(doc, now) {
   if (doc?.story !== true || !doc.story_expires_at) return false;
   const at = new Date(doc.story_expires_at);
   return !Number.isNaN(at.getTime()) && at.getTime() <= now.getTime();

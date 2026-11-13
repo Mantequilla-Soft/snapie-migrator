@@ -92,6 +92,25 @@ export function loadConfig(env = process.env) {
   const servicePort = num('SERVICE_PORT', 3021, { min: 1, max: 65535, int: true });
   if (serviceToken && servicePort === port) problems.push('SERVICE_PORT must differ from PORT');
 
+  // Where the hotnode hears about finished copies (issue #8). Set in .env only, never
+  // in a request, and loopback only: the migrator runs on the hotnode's own VPS.
+  const callbackRaw = str('HOTNODE_CALLBACK_URL');
+  const callbackSecret = str('HOTNODE_CALLBACK_SECRET');
+  let callback = null;
+  if (callbackRaw || callbackSecret) {
+    if (!callbackRaw) problems.push('HOTNODE_CALLBACK_URL is required when HOTNODE_CALLBACK_SECRET is set');
+    if (!callbackSecret) problems.push('HOTNODE_CALLBACK_SECRET is required when HOTNODE_CALLBACK_URL is set');
+    else if (callbackSecret.length < 32) problems.push('HOTNODE_CALLBACK_SECRET must be at least 32 characters');
+    if (!serviceToken) problems.push('HOTNODE_CALLBACK_URL needs MIGRATOR_SERVICE_TOKEN too (the hotnode asks through the service API)');
+    if (callbackRaw) {
+      let u = null;
+      try { u = new URL(callbackRaw); } catch (_) { problems.push(`HOTNODE_CALLBACK_URL: "${callbackRaw}" is not a URL`); }
+      if (u && (!['http:', 'https:'].includes(u.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname) || u.username || u.password)) {
+        problems.push(`HOTNODE_CALLBACK_URL: "${callbackRaw}" must be http(s) on 127.0.0.1, localhost or [::1], without credentials`);
+      } else if (u && callbackSecret.length >= 32) callback = Object.freeze({ url: u.href, secret: callbackSecret });
+    }
+  }
+
   // --- mongo ---
   const mongo = {
     uri: required('MONGODB_URI'),
@@ -162,6 +181,7 @@ export function loadConfig(env = process.env) {
     allowedUsers: Object.freeze(allowedUsers),
     serviceToken: serviceToken || null,
     servicePort,
+    callback,
     mongo: Object.freeze(mongo),
     s3: Object.freeze(s3),
     localGateway,
