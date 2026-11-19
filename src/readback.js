@@ -1,7 +1,7 @@
 /**
  * Playback check over HTTPS (SPEC §3 step 6): fetch what a viewer's player would
- * fetch, through the Bunny zone AND straight from s3.3speak.tv, and compare every
- * byte with the source:
+ * fetch, from s3.readbackHosts (s3.3speak.tv by default; the Bunny zone too when
+ * S3_READBACK_VIA_CDN=true), and compare every byte with the source:
  *   - the master manifest and every playlist it names,
  *   - the first and last segment of each media playlist (plus its init segment).
  * This catches what a listing can't: a bucket that isn't public, a CDN zone pointed
@@ -81,7 +81,7 @@ export const publicUrl = (host, bucket, key) =>
  * first mismatch or failure, naming the host and file.
  */
 export async function readBack({ s3, cid, paths, filesByPath, fetchImpl = fetch, signal, timeoutMs = DEFAULT_READBACK_TIMEOUT_MS, onProgress = () => {} }) {
-  const hosts = [s3.cdnHost, s3.directHost];
+  const hosts = s3.readbackHosts?.length ? s3.readbackHosts : [s3.directHost];
   let done = 0;
   for (const host of hosts) {
     for (const p of paths) {

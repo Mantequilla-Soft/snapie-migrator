@@ -126,6 +126,12 @@ export function loadConfig(env = process.env) {
   if (!PLAYER_HOST_RE.test(cdnHost)) problems.push(`S3_CDN_HOST "${cdnHost}" is not a bare host name (the player would turn S3 off)`);
   const directHost = str('S3_DIRECT_HOST', PLAYER_S3_DIRECT_HOST).toLowerCase();
   if (directHost !== PLAYER_S3_DIRECT_HOST) problems.push(`S3_DIRECT_HOST must be ${PLAYER_S3_DIRECT_HOST}: the player only accepts that direct host`);
+  // The playback check reads from the direct host only, unless asked to go through
+  // the Bunny zone too: the check is not real delivery, so it should not spend zone
+  // traffic (and must not stall when the zone is down or unpaid).
+  const readbackViaCdnRaw = str('S3_READBACK_VIA_CDN', 'false').toLowerCase();
+  if (!['true', 'false', '1', '0', 'yes', 'no'].includes(readbackViaCdnRaw)) problems.push(`S3_READBACK_VIA_CDN "${readbackViaCdnRaw}" must be true or false`);
+  const readbackViaCdn = ['true', '1', 'yes'].includes(readbackViaCdnRaw);
   const endpointRaw = required('S3_ENDPOINT');
   const s3 = {
     endpoint: endpointRaw ? httpsBase('S3_ENDPOINT', endpointRaw) : null,
@@ -135,6 +141,7 @@ export function loadConfig(env = process.env) {
     bucket,
     cdnHost,
     directHost,
+    readbackHosts: Object.freeze(readbackViaCdn ? [cdnHost, directHost] : [directHost]),
   };
 
   // --- sources / checks ---

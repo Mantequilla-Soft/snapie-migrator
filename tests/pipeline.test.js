@@ -249,10 +249,26 @@ describe('runItem: refuses to finish', () => {
     await expectNothingWritten(id);
   });
 
-  it('viewers unable to fetch through the zone: Mongo untouched', async () => {
+  it('viewers unable to fetch from the direct host: Mongo untouched', async () => {
+    const id = await insertLegacy();
+    fetchImpl.blockHost = 's3.3speak.tv';
+    await expect(runItem(item(id), deps())).rejects.toThrow(/s3.3speak.tv: manifest.m3u8 answered HTTP 403/);
+    await expectNothingWritten(id);
+    expectClean();
+  });
+
+  it('the zone down: the copy still completes, the check never goes through the zone', async () => {
     const id = await insertLegacy();
     fetchImpl.blockHost = 'buttercloud.b-cdn.net';
-    await expect(runItem(item(id), deps())).rejects.toThrow(/buttercloud.b-cdn.net: manifest.m3u8 answered HTTP 403/);
+    await runItem(item(id), deps());
+    expectClean();
+  });
+
+  it('the zone down with S3_READBACK_VIA_CDN on: Mongo untouched', async () => {
+    const id = await insertLegacy();
+    fetchImpl.blockHost = 'buttercloud.b-cdn.net';
+    const viaZone = { ...cfg, s3: { ...cfg.s3, readbackHosts: [cfg.s3.cdnHost, cfg.s3.directHost] } };
+    await expect(runItem(item(id), { ...deps(), cfg: viaZone })).rejects.toThrow(/buttercloud.b-cdn.net: manifest.m3u8 answered HTTP 403/);
     await expectNothingWritten(id);
     expectClean();
   });

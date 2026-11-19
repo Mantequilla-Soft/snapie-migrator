@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DiskBudget, MIN_START_BYTES } from '../src/disk.js';
 import { CancelledError, OutOfSpaceError } from '../src/errors.js';
-import { planReadback, playlistRefs } from '../src/readback.js';
+import { planReadback, playlistRefs, readBack } from '../src/readback.js';
+import crypto from 'node:crypto';
 import { Throttle } from '../src/throttle.js';
 
 const GB = 1024 ** 3;
@@ -101,5 +102,26 @@ describe('playlists', () => {
     expect(paths.sort()).toEqual(['v/index.m3u8', 'v/ok.ts']);
     expect(warnings).toHaveLength(3);
     expect(warnings.join('\n')).toMatch(/absolute URI[\s\S]*leaves the video directory[\s\S]*not in the directory/);
+  });
+});
+
+describe('readBack', () => {
+  const body = Buffer.from('#EXTM3U\n');
+  const filesByPath = new Map([['manifest.m3u8', { size: body.length, sha256: crypto.createHash('sha256').update(body).digest('hex') }]]);
+  const run = (s3) => {
+    const seen = [];
+    const fetchImpl = async (url) => { seen.push(new URL(url).hostname); return new Response(body, { status: 200 }); };
+    return readBack({ s3, cid: 'Qm', paths: ['manifest.m3u8'], filesByPath, fetchImpl }).then((r) => ({ ...r, seen }));
+  };
+
+  it('reads only from the configured hosts, never the zone by default', async () => {
+    const r = await run({ bucket: 'b', cdnHost: 'zone.b-cdn.net', directHost: 's3.3speak.tv', readbackHosts: ['s3.3speak.tv'] });
+    expect(r.seen).toEqual(['s3.3speak.tv']);
+    expect(r.checked).toBe(1);
+  });
+
+  it('falls back to the direct host when no readback hosts are given', async () => {
+    const r = await run({ bucket: 'b', cdnHost: 'zone.b-cdn.net', directHost: 's3.3speak.tv' });
+    expect(r.seen).toEqual(['s3.3speak.tv']);
   });
 });
