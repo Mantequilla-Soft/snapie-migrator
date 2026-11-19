@@ -22,6 +22,12 @@ describe('loadConfig', () => {
     expect(Object.isFrozen(c)).toBe(true);
   });
 
+  it('checks playback on the direct host only, unless S3_READBACK_VIA_CDN is on', () => {
+    expect(loadConfig(baseEnv()).s3.readbackHosts).toEqual(['s3.3speak.tv']);
+    expect(loadConfig(baseEnv({ S3_READBACK_VIA_CDN: 'true' })).s3.readbackHosts).toEqual(['buttercloud.b-cdn.net', 's3.3speak.tv']);
+    expect(problemsOf(baseEnv({ S3_READBACK_VIA_CDN: 'maybe' }))).toEqual([expect.stringMatching(/S3_READBACK_VIA_CDN/)]);
+  });
+
   it('lists every problem at once, not just the first', () => {
     const p = problemsOf({});
     for (const name of ['PUBLIC_BASE_URL', 'SESSION_SECRET', 'MONGODB_URI', 'S3_BUCKET', 'S3_ENDPOINT', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']) {
