@@ -343,7 +343,8 @@ describe('archive', () => {
     const r = await svc.archive(CID);
     expect(r).toMatchObject({ cid: CID, archived: 1, already: 1, warnings: [] });
     expect((await db.collection('videos').findOne({ _id: insertedId })).storage_state).toBe('archived');
-    expect(fetches.find((f) => f.method === 'HEAD').url).toBe(`https://buttercloud.b-cdn.net/videos-test/${CID}/manifest.m3u8`);
+    // Checked on the direct host, never through the zone (it may be out of credit).
+    expect(fetches.filter((f) => f.method === 'HEAD').map((f) => f.url)).toEqual([`https://s3.3speak.tv/videos-test/${CID}/manifest.m3u8`]);
     await drain();
     expect(posted()[0].json).toMatchObject({ event: 'archived', cid: CID, archived: 1 });
 
@@ -360,6 +361,27 @@ describe('archive', () => {
     await expect(svc.archive(CID)).rejects.toMatchObject({ status: 503, code: 'copy_check_unavailable' });
     expect((await db.collection('videos').findOne({})).storage_state).toBe('hot');
     await expect(svc.archive(CID2)).rejects.toMatchObject({ status: 404, code: 'not_in_mongo' });
+  });
+
+  it('flips with the zone out of credit; checks the zone too only with S3_READBACK_VIA_CDN', async () => {
+    const { insertedId } = await db.collection('videos').insertOne(legacy(ours(CID)));
+    const zoneDown = (url, opts) => (opts.method === 'HEAD' && new URL(url).hostname === 'buttercloud.b-cdn.net'
+      ? new Response(null, { status: 403 }) : defaultRespond(url, opts));
+    respond = zoneDown;
+    cfg = { ...cfg, s3: { ...cfg.s3, readbackHosts: [cfg.s3.cdnHost, cfg.s3.directHost] } };
+    await svc.stop();
+    svc = makeService();
+    svc.start();
+    respond = zoneDown;
+    await expect(svc.archive(CID)).rejects.toMatchObject({ status: 409, code: 'copy_missing' });
+    expect((await db.collection('videos').findOne({ _id: insertedId })).storage_state).toBe('hot');
+
+    cfg = { ...cfg, s3: { ...cfg.s3, readbackHosts: [cfg.s3.directHost] } };
+    await svc.stop();
+    svc = makeService();
+    svc.start();
+    respond = zoneDown;
+    expect(await svc.archive(CID)).toMatchObject({ archived: 1 });
   });
 
   it('warns when the player does not serve the S3 zone afterwards', async () => {

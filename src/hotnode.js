@@ -452,8 +452,17 @@ export class HotnodeService {
       throw httpError(409, 'not_copied', `not copied: ${notCopied.map((d) => `${d.collection} ${d.doc._id} (${d.reason ?? d.kind})`).join(', ')}`);
     }
 
-    // The copy must be there for viewers, through the zone, before the player relies on it alone.
-    for (const url of new Set(relevant.map((d) => d.doc.s3_url))) {
+    // The copy must be there for viewers before the player relies on it alone. Checked
+    // on the same hosts as the playback check (the direct host by default, the zone
+    // too with S3_READBACK_VIA_CDN), so a zone out of credit does not block the flip.
+    const hosts = this.cfg.s3.readbackHosts?.length ? this.cfg.s3.readbackHosts : [this.cfg.s3.directHost];
+    const checkUrls = new Set();
+    for (const d of relevant) {
+      const parsed = parseS3Url(this.cfg.s3, d.doc.s3_url);
+      if (!parsed) { checkUrls.add(d.doc.s3_url); continue; }
+      for (const host of hosts) checkUrls.add(`https://${host}/${this.cfg.s3.bucket}/${parsed.cidPath}`);
+    }
+    for (const url of checkUrls) {
       let res;
       try {
         res = await this.fetchImpl(url, { method: 'HEAD', signal: AbortSignal.timeout(15_000) });
